@@ -1,0 +1,11 @@
+{
+  "name": "Fat Loss Plan Tracker",
+  "short_name": "FatLossPlan",
+  "description": "6-day workout tracker with weight log and calorie deficit calculator",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f1115",
+  "theme_color": "#0f1115",
+  "orientation": "portrait",
+  "icons": []
+}
