@@ -364,12 +364,17 @@ async function renderWeightView() {
 
   const entryCard = document.createElement('div');
   entryCard.className = 'card';
+  const todayStr = new Date().toISOString().slice(0, 10);
   entryCard.innerHTML = `
-    <div class="card-title">Log today's weight</div>
+    <div class="card-title">Log your weight</div>
     <div class="field-row">
       <div class="field">
         <label>Weight (kg)</label>
         <input type="number" step="0.1" id="weight-input" placeholder="e.g. 74.5" value="${profile.currentWeight || ''}">
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="weight-date-input" value="${todayStr}" max="${todayStr}">
       </div>
     </div>
     <button class="btn" id="log-weight-btn">Add entry</button>
@@ -442,10 +447,13 @@ async function renderWeightView() {
     const val = parseFloat(document.getElementById('weight-input').value);
     if (!val || val <= 0) return;
     if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
-    const today = new Date().toISOString().slice(0, 10);
-    await addWeightEntry(today, val);
-    profile.currentWeight = val;
-    await saveProfile();
+    const chosenDate = document.getElementById('weight-date-input').value || new Date().toISOString().slice(0, 10);
+    await addWeightEntry(chosenDate, val);
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (chosenDate === todayStr) {
+      profile.currentWeight = val;
+      await saveProfile();
+    }
     await loadWeightLog();
     renderWeightView();
   };
@@ -601,7 +609,7 @@ async function renderCaloriesView() {
   const entryCard = document.createElement('div');
   entryCard.className = 'card';
   entryCard.innerHTML = `
-    <div class="card-title">Log today's calories eaten</div>
+    <div class="card-title">Add calories eaten (adds to today's total)</div>
     <div class="field-row">
       <div class="field">
         <label>Calories (kcal)</label>
@@ -673,7 +681,9 @@ async function renderCaloriesView() {
     const val = parseInt(document.getElementById('cal-input').value, 10);
     if (!val || val <= 0) return;
     if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
-    await addCalorieEntry(today, val);
+    const existing = calorieLog.find(e => e.date === today);
+    const newTotal = (existing ? existing.calories : 0) + val;
+    await addCalorieEntry(today, newTotal);
     await loadCalorieLog();
     renderCaloriesView();
   };
