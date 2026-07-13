@@ -29,12 +29,12 @@ function withTimeout(promise, ms) {
 async function ensureAuth() {
   if (!sb) { authFailed = true; return; }
   try {
-    const { data: { session } } = await withTimeout(sb.auth.getSession(), 6000);
+    const { data: { session } } = await withTimeout(sb.auth.getSession(), 15000);
     if (session) {
       currentUserId = session.user.id;
       return;
     }
-    const { data, error } = await withTimeout(sb.auth.signInAnonymously(), 6000);
+    const { data, error } = await withTimeout(sb.auth.signInAnonymously(), 15000);
     if (error) {
       console.error('Anonymous sign-in failed. Did you enable it in Supabase → Authentication → Providers?', error);
       authFailed = true;
@@ -441,6 +441,7 @@ async function renderWeightView() {
   document.getElementById('log-weight-btn').onclick = async () => {
     const val = parseFloat(document.getElementById('weight-input').value);
     if (!val || val <= 0) return;
+    if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
     const today = new Date().toISOString().slice(0, 10);
     await addWeightEntry(today, val);
     profile.currentWeight = val;
@@ -671,6 +672,7 @@ async function renderCaloriesView() {
   document.getElementById('log-cal-btn').onclick = async () => {
     const val = parseInt(document.getElementById('cal-input').value, 10);
     if (!val || val <= 0) return;
+    if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
     await addCalorieEntry(today, val);
     await loadCalorieLog();
     renderCaloriesView();
@@ -678,8 +680,9 @@ async function renderCaloriesView() {
 }
 
 /* ============ INIT ============ */
-(async function init() {
+async function startApp() {
   try {
+    authFailed = false;
     await ensureAuth();
     if (currentUserId) {
       await loadProfile();
@@ -689,7 +692,12 @@ async function renderCaloriesView() {
     if (authFailed) {
       const banner = document.createElement('div');
       banner.style.cssText = 'background:rgba(255,106,61,0.15);border:1px solid rgba(255,106,61,0.4);color:#ffb08a;border-radius:8px;padding:10px 12px;font-size:0.78rem;margin-bottom:12px;';
-      banner.textContent = "Couldn't connect to the database — your entries won't be saved right now. Check your internet connection and reload.";
+      banner.textContent = "Couldn't connect to the database — your entries won't be saved right now. ";
+      const retryBtn = document.createElement('button');
+      retryBtn.textContent = 'Retry';
+      retryBtn.style.cssText = 'background:#ff6a3d;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:0.75rem;font-weight:700;margin-left:6px;cursor:pointer;';
+      retryBtn.onclick = () => startApp();
+      banner.appendChild(retryBtn);
       const root = document.getElementById('view-root');
       root.parentNode.insertBefore(banner, root);
     }
@@ -700,4 +708,5 @@ async function renderCaloriesView() {
       root.innerHTML = '<div style="padding:20px;color:#ffb08a;">Something went wrong loading the app. Open browser dev tools console for details, or check that Supabase is reachable.</div>';
     }
   }
-})();
+}
+startApp();
