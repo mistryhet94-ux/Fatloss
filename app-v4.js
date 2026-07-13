@@ -1,13 +1,13 @@
 /* ============ SUPABASE SETUP ============ */
 /* Fill these in from Supabase Dashboard → Settings → API.
    The anon/public key is safe to put here — it only works within
-   the Row Level Security rules set up in supabase-schema.sql. */
-const SUPABASE_URL = 'https://oirjnoacgbhoagmsxabh.supabase.co';
+   the Row Level Security rules set up in sb-schema.sql. */
+const SUPABASE_URL = 'https://oirjnoacgbhoagmsxabh.sb.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_2AyCN-aOE39a06mkV3h9Lg_XPUzp5wC';
 
-let supabase = null;
+let sb = null;
 if (window.supabase && window.supabase.createClient) {
-  supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 } else {
   document.addEventListener('DOMContentLoaded', () => {
     const root = document.getElementById('view-root');
@@ -27,14 +27,14 @@ function withTimeout(promise, ms) {
 }
 
 async function ensureAuth() {
-  if (!supabase) { authFailed = true; return; }
+  if (!sb) { authFailed = true; return; }
   try {
-    const { data: { session } } = await withTimeout(supabase.auth.getSession(), 6000);
+    const { data: { session } } = await withTimeout(sb.auth.getSession(), 6000);
     if (session) {
       currentUserId = session.user.id;
       return;
     }
-    const { data, error } = await withTimeout(supabase.auth.signInAnonymously(), 6000);
+    const { data, error } = await withTimeout(sb.auth.signInAnonymously(), 6000);
     if (error) {
       console.error('Anonymous sign-in failed. Did you enable it in Supabase → Authentication → Providers?', error);
       authFailed = true;
@@ -295,7 +295,7 @@ let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, heig
 
 async function loadProfile() {
   if (!currentUserId) return;
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('profile')
     .select('*')
     .eq('user_id', currentUserId)
@@ -314,7 +314,7 @@ async function loadProfile() {
 
 async function saveProfile() {
   if (!currentUserId) return;
-  const { error } = await supabase.from('profile').upsert({
+  const { error } = await sb.from('profile').upsert({
     user_id: currentUserId,
     age: profile.age ? parseInt(profile.age, 10) : null,
     sex: profile.sex,
@@ -331,7 +331,7 @@ let weightLog = [];
 
 async function loadWeightLog() {
   if (!currentUserId) { weightLog = []; return; }
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('weight_log')
     .select('entry_date, weight')
     .eq('user_id', currentUserId)
@@ -341,14 +341,14 @@ async function loadWeightLog() {
 }
 
 async function addWeightEntry(dateStr, val) {
-  const { error } = await supabase
+  const { error } = await sb
     .from('weight_log')
     .upsert({ user_id: currentUserId, entry_date: dateStr, weight: val }, { onConflict: 'user_id,entry_date' });
   if (error) console.error('addWeightEntry failed', error);
 }
 
 async function deleteWeightEntry(dateStr) {
-  const { error } = await supabase
+  const { error } = await sb
     .from('weight_log')
     .delete()
     .eq('user_id', currentUserId)
@@ -492,7 +492,7 @@ let calorieLog = [];
 
 async function loadCalorieLog() {
   if (!currentUserId) { calorieLog = []; return; }
-  const { data, error } = await supabase
+  const { data, error } = await sb
     .from('calorie_log')
     .select('entry_date, calories')
     .eq('user_id', currentUserId)
@@ -502,14 +502,14 @@ async function loadCalorieLog() {
 }
 
 async function addCalorieEntry(dateStr, val) {
-  const { error } = await supabase
+  const { error } = await sb
     .from('calorie_log')
     .upsert({ user_id: currentUserId, entry_date: dateStr, calories: val }, { onConflict: 'user_id,entry_date' });
   if (error) console.error('addCalorieEntry failed', error);
 }
 
 async function deleteCalorieEntry(dateStr) {
-  const { error } = await supabase
+  const { error } = await sb
     .from('calorie_log')
     .delete()
     .eq('user_id', currentUserId)
