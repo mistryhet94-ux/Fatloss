@@ -2,8 +2,8 @@
 /* Fill these in from Supabase Dashboard → Settings → API.
    The anon/public key is safe to put here — it only works within
    the Row Level Security rules set up in sb-schema.sql. */
-const SUPABASE_URL = 'https://oirjnoacgbhoagmsxabh.sb.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_2AyCN-aOE39a06mkV3h9Lg_XPUzp5wC';
+const SUPABASE_URL = 'https://rzkleuuaullcijeixrpw.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_Up8mEluQTx-afEo-NugOvw_5c9Aqevh';
 
 let sb = null;
 if (window.supabase && window.supabase.createClient) {
