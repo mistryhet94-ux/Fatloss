@@ -48,3 +48,20 @@ create policy "own calorie log" on calorie_log
 
 -- Enable anonymous sign-ins for this project:
 -- Dashboard → Authentication → Providers → Anonymous Sign-Ins → toggle ON
+
+-- Exercise performance log (for progressive overload tracking)
+create table exercise_log (
+  id bigint generated always as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  exercise_name text not null,
+  entry_date date not null,
+  weight numeric,
+  reps int,
+  created_at timestamptz default now(),
+  unique (user_id, exercise_name, entry_date)
+);
+
+alter table exercise_log enable row level security;
+
+create policy "own exercise log" on exercise_log
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

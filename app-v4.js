@@ -126,13 +126,39 @@ const plan = [
   }
 ];
 
-let currentView = 'workout'; // 'workout' | 'weight' | 'calories'
+let currentView = 'workout'; // 'workout' | 'weight' | 'calories' | 'backup'
 let currentDay = 0;
 const dayState = {}; // dayIndex -> Set of checked exercise indices
+let exerciseLog = []; // {exercise_name, entry_date, weight, reps}
 
 function loadDayState(day) {
   if (!dayState[day]) dayState[day] = new Set();
   return dayState[day];
+}
+
+/* ============ EXERCISE LOG (progressive overload) ============ */
+async function loadExerciseLog() {
+  if (!currentUserId) { exerciseLog = []; return; }
+  const { data, error } = await sb
+    .from('exercise_log')
+    .select('exercise_name, entry_date, weight, reps')
+    .eq('user_id', currentUserId)
+    .order('entry_date', { ascending: true });
+  if (error) { console.error('loadExerciseLog failed', error); exerciseLog = []; return; }
+  exerciseLog = data || [];
+}
+
+function getLastLog(exerciseName) {
+  const entries = exerciseLog.filter(e => e.exercise_name === exerciseName);
+  return entries.length ? entries[entries.length - 1] : null;
+}
+
+async function saveExerciseLog(exerciseName, dateStr, weight, reps) {
+  if (!currentUserId) return;
+  const { error } = await sb
+    .from('exercise_log')
+    .upsert({ user_id: currentUserId, exercise_name: exerciseName, entry_date: dateStr, weight, reps }, { onConflict: 'user_id,exercise_name,entry_date' });
+  if (error) console.error('saveExerciseLog failed', error);
 }
 
 /* ============ MAIN NAV ============ */
@@ -162,7 +188,8 @@ function renderView() {
 }
 
 /* ============ WORKOUT VIEW ============ */
-function renderWorkoutView() {
+async function renderWorkoutView() {
+  await loadExerciseLog();
   const root = document.getElementById('view-root');
   root.innerHTML = '';
 
@@ -201,6 +228,10 @@ function renderWorkoutView() {
   renderDayContent();
 }
 
+function isCardioExercise(ex) {
+  return /min,/.test(ex.sets) || /walk|cycle|treadmill|cardio/i.test(ex.name);
+}
+
 function renderDayContent() {
   const d = plan[currentDay];
   const checked = loadDayState(currentDay);
@@ -225,7 +256,12 @@ function renderDayContent() {
     cb.type = 'checkbox';
     cb.checked = checked.has(i);
     cb.onchange = () => {
-      if (cb.checked) checked.add(i); else checked.delete(i);
+      if (cb.checked) {
+        checked.add(i);
+        startRestTimer(ex.name);
+      } else {
+        checked.delete(i);
+      }
       renderDayContent();
       updateProgress();
     };
@@ -248,6 +284,36 @@ function renderDayContent() {
     link.className = 'video-link';
     link.textContent = '▶ Watch tutorial';
     info.appendChild(link);
+
+    if (!isCardioExercise(ex)) {
+      const last = getLastLog(ex.name);
+      const logWrap = document.createElement('div');
+      logWrap.style.cssText = 'margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;';
+      logWrap.innerHTML = `
+        <input type="number" step="0.5" placeholder="kg" style="width:60px; background:#1e222b; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px; font-size:0.78rem;" class="log-weight-input">
+        <span style="color:var(--muted); font-size:0.75rem;">x</span>
+        <input type="number" placeholder="reps" style="width:56px; background:#1e222b; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px; font-size:0.78rem;" class="log-reps-input">
+        <button class="log-save-btn" style="background:transparent; border:1px solid var(--border); color:var(--accent2); border-radius:6px; padding:6px 10px; font-size:0.72rem; font-weight:700; cursor:pointer;">Save</button>
+        <span class="log-last-note" style="color:var(--muted); font-size:0.7rem; width:100%;">${last ? `Last: ${last.weight ?? '-'}kg x ${last.reps ?? '-'} (${last.entry_date})` : 'No history yet'}</span>
+      `;
+      const weightInput = logWrap.querySelector('.log-weight-input');
+      const repsInput = logWrap.querySelector('.log-reps-input');
+      const saveBtn = logWrap.querySelector('.log-save-btn');
+      const lastNote = logWrap.querySelector('.log-last-note');
+      saveBtn.onclick = async () => {
+        if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+        const w = parseFloat(weightInput.value);
+        const r = parseInt(repsInput.value, 10);
+        if (!w && !r) return;
+        const todayStr = new Date().toISOString().slice(0, 10);
+        await saveExerciseLog(ex.name, todayStr, w || null, r || null);
+        await loadExerciseLog();
+        lastNote.textContent = `Last: ${w || '-'}kg x ${r || '-'} (${todayStr})`;
+        weightInput.value = '';
+        repsInput.value = '';
+      };
+      info.appendChild(logWrap);
+    }
 
     row.appendChild(cb);
     row.appendChild(info);
@@ -274,6 +340,53 @@ function updateProgress() {
   if (lbl) lbl.textContent = `Today: ${done}/${total} done`;
   if (pctEl) pctEl.textContent = pct + '%';
   if (fill) fill.style.width = pct + '%';
+}
+
+/* ============ REST TIMER ============ */
+let restTimerInterval = null;
+function startRestTimer(exerciseName) {
+  if (isCardioExercise({ name: exerciseName, sets: '' })) return;
+  const existing = document.getElementById('rest-timer-overlay');
+  if (existing) existing.remove();
+  if (restTimerInterval) clearInterval(restTimerInterval);
+
+  let seconds = 75; // default rest between sets
+  const overlay = document.createElement('div');
+  overlay.id = 'rest-timer-overlay';
+  overlay.style.cssText = 'position:fixed; bottom:16px; left:16px; right:16px; background:var(--card); border:1px solid var(--accent); border-radius:12px; padding:12px 14px; display:flex; align-items:center; justify-content:space-between; z-index:9998; box-shadow:0 4px 20px rgba(0,0,0,0.4);';
+  overlay.innerHTML = `
+    <div>
+      <div style="font-size:0.72rem; color:var(--muted);">Rest before next set</div>
+      <div id="rest-timer-count" style="font-size:1.3rem; font-weight:700; color:var(--accent2);">01:15</div>
+    </div>
+    <button id="rest-timer-skip" style="background:var(--accent); color:#fff; border:none; border-radius:8px; padding:8px 14px; font-size:0.78rem; font-weight:700; cursor:pointer;">Skip</button>
+  `;
+  document.body.appendChild(overlay);
+
+  const countEl = document.getElementById('rest-timer-count');
+  const skipBtn = document.getElementById('rest-timer-skip');
+  const render = () => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    if (countEl) countEl.textContent = `${m}:${s}`;
+  };
+  render();
+
+  restTimerInterval = setInterval(() => {
+    seconds--;
+    render();
+    if (seconds <= 0) {
+      clearInterval(restTimerInterval);
+      restTimerInterval = null;
+      overlay.remove();
+    }
+  }, 1000);
+
+  skipBtn.onclick = () => {
+    clearInterval(restTimerInterval);
+    restTimerInterval = null;
+    overlay.remove();
+  };
 }
 
 /* ============ PROFILE (for calorie calc) ============ */
