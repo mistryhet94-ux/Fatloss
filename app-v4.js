@@ -142,7 +142,8 @@ function renderMainNav() {
   const views = [
     { id: 'workout', label: 'Workout' },
     { id: 'weight', label: 'Weight Log' },
-    { id: 'calories', label: 'Calories' }
+    { id: 'calories', label: 'Calories' },
+    { id: 'backup', label: 'Backup' }
   ];
   views.forEach(v => {
     const btn = document.createElement('div');
@@ -157,6 +158,7 @@ function renderView() {
   if (currentView === 'workout') renderWorkoutView();
   else if (currentView === 'weight') renderWeightView();
   else if (currentView === 'calories') renderCaloriesView();
+  else if (currentView === 'backup') renderBackupView();
 }
 
 /* ============ WORKOUT VIEW ============ */
@@ -673,6 +675,96 @@ async function renderCaloriesView() {
   };
 }
 
+/* ============ BACKUP VIEW ============ */
+async function renderBackupView() {
+  const root = document.getElementById('view-root');
+  root.innerHTML = '';
+
+  const statusCard = document.createElement('div');
+  statusCard.className = 'card';
+  statusCard.innerHTML = `
+    <div class="card-title">Connection</div>
+    <div class="empty-note" style="text-align:left;">
+      ${navigator.onLine ? '🟢 Online' : '🔴 Offline — reconnect before backing up or restoring'}
+      ${currentUserId ? '<br>🟢 Connected to database' : '<br>🟠 Not connected — tap Retry on the Workout tab first'}
+    </div>
+  `;
+  root.appendChild(statusCard);
+
+  const exportCard = document.createElement('div');
+  exportCard.className = 'card';
+  exportCard.innerHTML = `
+    <div class="card-title">Export backup</div>
+    <div class="empty-note" style="text-align:left; padding:0 0 10px;">Downloads a JSON file with your profile, weight log, and calorie log. Keep it somewhere safe (email it to yourself, save to Drive, etc).</div>
+    <button class="btn" id="export-btn">Download backup</button>
+  `;
+  root.appendChild(exportCard);
+
+  const importCard = document.createElement('div');
+  importCard.className = 'card';
+  importCard.innerHTML = `
+    <div class="card-title">Restore from backup</div>
+    <div class="empty-note" style="text-align:left; padding:0 0 10px;">Restoring merges the backup into your current data — entries with the same date get overwritten by the backup's version.</div>
+    <input type="file" id="import-file" accept="application/json" style="color:var(--muted); font-size:0.8rem; margin-bottom:10px; width:100%;">
+    <button class="btn" id="import-btn">Restore backup</button>
+  `;
+  root.appendChild(importCard);
+
+  document.getElementById('export-btn').onclick = async () => {
+    if (!currentUserId) { alert("Not connected — tap Retry on the Workout tab first."); return; }
+    await loadWeightLog();
+    await loadCalorieLog();
+    await loadProfile();
+    const backup = {
+      exported_at: new Date().toISOString(),
+      profile,
+      weight_log: weightLog,
+      calorie_log: calorieLog
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `fatloss-backup-${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  document.getElementById('import-btn').onclick = async () => {
+    if (!currentUserId) { alert("Not connected — tap Retry on the Workout tab first."); return; }
+    const fileInput = document.getElementById('import-file');
+    const file = fileInput.files[0];
+    if (!file) { alert('Choose a backup file first.'); return; }
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+      if (!backup.weight_log || !backup.calorie_log) {
+        alert('This file doesn\'t look like a valid backup.');
+        return;
+      }
+      if (!confirm(`Restore ${backup.weight_log.length} weight entries and ${backup.calorie_log.length} calorie entries? This will overwrite any matching dates.`)) return;
+
+      for (const entry of backup.weight_log) {
+        await addWeightEntry(entry.date, entry.weight);
+      }
+      for (const entry of backup.calorie_log) {
+        await addCalorieEntry(entry.date, entry.calories);
+      }
+      if (backup.profile) {
+        profile = { ...profile, ...backup.profile };
+        await saveProfile();
+      }
+      alert('Restore complete!');
+      renderBackupView();
+    } catch (e) {
+      console.error('Restore failed:', e);
+      alert('Could not read that file — make sure it\'s a backup exported from this app.');
+    }
+  };
+}
+
 /* ============ INIT ============ */
 async function startApp() {
   try {
@@ -704,3 +796,18 @@ async function startApp() {
   }
 }
 startApp();
+
+/* ============ OFFLINE DETECTION ============ */
+window.addEventListener('offline', () => {
+  if (document.getElementById('offline-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'offline-banner';
+  banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ff6a3d;color:#fff;text-align:center;padding:8px;font-size:0.78rem;font-weight:700;z-index:9999;';
+  banner.textContent = "You're offline — entries won't save until you reconnect.";
+  document.body.insertBefore(banner, document.body.firstChild);
+});
+window.addEventListener('online', () => {
+  const banner = document.getElementById('offline-banner');
+  if (banner) banner.remove();
+  startApp();
+});

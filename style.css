@@ -31,12 +31,13 @@
   .main-nav-btn {
     flex: 1;
     text-align: center;
-    padding: 9px 6px;
+    padding: 9px 4px;
     border-radius: 7px;
-    font-size: 0.78rem;
+    font-size: 0.7rem;
     font-weight: 600;
     color: var(--muted);
     cursor: pointer;
+    line-height: 1.25;
   }
   .main-nav-btn.active {
     background: var(--accent);
