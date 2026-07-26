@@ -50,92 +50,76 @@ async function ensureAuth() {
 /* ============ WORKOUT PLAN DATA ============ */
 const plan = [
   {
-    day: "Day 1", title: "Push (Chest, Shoulders, Triceps)",
-    focus: "Machine chest/shoulder/tricep work + 20 min incline walk",
+    day: "Day 1", title: "Push (Chest, Shoulders, Triceps) — Beginner",
+    focus: "4 core machines + 20 min incline walk. Keep it simple this phase.",
     exercises: [
-      { name: "Chest Press Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Incline Chest Press Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Shoulder Press Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Lateral Raise Machine", sets: "3 sets x 15 reps" },
-      { name: "Pec Deck / Chest Fly Machine", sets: "3 sets x 15 reps" },
-      { name: "Triceps Pushdown (cable/machine)", sets: "3 sets x 15 reps" },
+      { name: "Chest Press Machine", sets: "2 sets x 12 reps" },
+      { name: "Shoulder Press Machine", sets: "2 sets x 12 reps" },
+      { name: "Triceps Pushdown (cable/machine)", sets: "2 sets x 12 reps" },
+      { name: "Pec Deck / Chest Fly Machine", sets: "2 sets x 12 reps" },
       { name: "Incline Treadmill Walk", sets: "20 min, moderate pace" }
     ]
   },
   {
-    day: "Day 2", title: "Pull (Back, Biceps)",
-    focus: "Machine back/bicep work + 20 min incline walk",
+    day: "Day 2", title: "Pull (Back, Biceps) — Beginner",
+    focus: "4 core machines + 20 min incline walk",
     exercises: [
-      { name: "Lat Pulldown Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Seated Row Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Assisted Pull-up Machine (if available)", sets: "3 sets x 10-12 reps" },
-      { name: "Rear Delt Fly Machine", sets: "3 sets x 15 reps" },
-      { name: "Bicep Curl Machine", sets: "3 sets x 15 reps" },
-      { name: "Cable Bicep Curl", sets: "2 sets x 15 reps" },
+      { name: "Lat Pulldown Machine", sets: "2 sets x 12 reps" },
+      { name: "Seated Row Machine", sets: "2 sets x 12 reps" },
+      { name: "Bicep Curl Machine", sets: "2 sets x 12 reps" },
       { name: "Incline Treadmill Walk", sets: "20 min, moderate pace" }
     ]
   },
   {
-    day: "Day 3", title: "Legs + Core",
-    focus: "Machine leg work + core + 15 min walk",
+    day: "Day 3", title: "Legs — Beginner",
+    focus: "3 core leg machines + 15 min walk",
     exercises: [
-      { name: "Leg Press Machine", sets: "4 sets x 12-15 reps" },
-      { name: "Leg Extension Machine", sets: "3 sets x 15 reps" },
-      { name: "Leg Curl Machine (hamstrings)", sets: "3 sets x 15 reps" },
-      { name: "Hip Abductor/Adductor Machine", sets: "2 sets each x 15 reps" },
-      { name: "Standing/Seated Calf Raise Machine", sets: "3 sets x 20 reps" },
-      { name: "Cable Crunch or Ab Machine", sets: "3 sets x 15-20 reps" },
+      { name: "Leg Press Machine", sets: "2 sets x 12 reps" },
+      { name: "Leg Extension Machine", sets: "2 sets x 12 reps" },
+      { name: "Leg Curl Machine (hamstrings)", sets: "2 sets x 12 reps" },
       { name: "Incline Treadmill Walk", sets: "15 min, moderate pace" }
     ]
   },
   {
-    day: "Day 4", title: "Push (Chest, Shoulders, Triceps) — Volume 2",
-    focus: "Repeat push day with slightly different angles + 25 min cardio",
+    day: "Day 4", title: "Push (Chest, Shoulders, Triceps) — Beginner",
+    focus: "Same as Day 1 — repetition builds the habit + 25 min cardio",
     exercises: [
-      { name: "Incline Chest Press Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Chest Press Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Shoulder Press Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Cable Lateral Raise", sets: "3 sets x 15 reps" },
-      { name: "Pec Deck / Chest Fly Machine", sets: "3 sets x 15 reps" },
-      { name: "Overhead Triceps Extension Machine", sets: "3 sets x 15 reps" },
+      { name: "Chest Press Machine", sets: "2 sets x 12 reps" },
+      { name: "Shoulder Press Machine", sets: "2 sets x 12 reps" },
+      { name: "Triceps Pushdown (cable/machine)", sets: "2 sets x 12 reps" },
+      { name: "Pec Deck / Chest Fly Machine", sets: "2 sets x 12 reps" },
       { name: "Cardio: Cycle or Treadmill", sets: "25 min, steady pace" }
     ]
   },
   {
-    day: "Day 5", title: "Pull (Back, Biceps) — Volume 2",
-    focus: "Repeat pull day + 25 min cardio",
+    day: "Day 5", title: "Pull (Back, Biceps) — Beginner",
+    focus: "Same as Day 2 + 25 min cardio",
     exercises: [
-      { name: "Seated Row Machine", sets: "3 sets x 12-15 reps" },
-      { name: "Lat Pulldown Machine (wide grip)", sets: "3 sets x 12-15 reps" },
-      { name: "Assisted Pull-up Machine (if available)", sets: "3 sets x 10-12 reps" },
-      { name: "Rear Delt Fly Machine", sets: "3 sets x 15 reps" },
-      { name: "Preacher Curl Machine", sets: "3 sets x 15 reps" },
-      { name: "Hammer Curl (dumbbell, light)", sets: "2 sets x 15 reps" },
+      { name: "Lat Pulldown Machine", sets: "2 sets x 12 reps" },
+      { name: "Seated Row Machine", sets: "2 sets x 12 reps" },
+      { name: "Bicep Curl Machine", sets: "2 sets x 12 reps" },
       { name: "Cardio: Cycle or Treadmill", sets: "25 min, steady pace" }
     ]
   },
   {
-    day: "Day 6", title: "Legs + Core + Full Body Cardio",
-    focus: "Legs, core, and longer cardio finisher",
+    day: "Day 6", title: "Legs — Beginner",
+    focus: "Same as Day 3 + longer cardio finisher",
     exercises: [
-      { name: "Leg Press Machine", sets: "4 sets x 12-15 reps" },
-      { name: "Leg Extension Machine", sets: "3 sets x 15 reps" },
-      { name: "Leg Curl Machine", sets: "3 sets x 15 reps" },
-      { name: "Glute Kickback Machine", sets: "3 sets x 15 reps" },
-      { name: "Calf Raise Machine", sets: "3 sets x 20 reps" },
-      { name: "Ab/Core Machine", sets: "3 sets x 15-20 reps" },
+      { name: "Leg Press Machine", sets: "2 sets x 12 reps" },
+      { name: "Leg Extension Machine", sets: "2 sets x 12 reps" },
+      { name: "Leg Curl Machine (hamstrings)", sets: "2 sets x 12 reps" },
       { name: "Cardio: Incline Walk or Cycle", sets: "30 min, steady pace" }
     ]
   },
   {
     day: "Cardio", title: "Weekly Cardio Guide",
-    focus: "Total weekly cardio target: ~2 hr 15 min - 2 hr 30 min",
+    focus: "Total weekly cardio target: ~2 hr - 2 hr 15 min",
     exercises: [
-      { name: "Day 1 (Push) — Incline Treadmill Walk", sets: "20 min, moderate pace, HR ~60-70% max" },
-      { name: "Day 2 (Pull) — Incline Treadmill Walk", sets: "20 min, moderate pace, HR ~60-70% max" },
+      { name: "Day 1 (Push) — Incline Treadmill Walk", sets: "20 min, moderate pace" },
+      { name: "Day 2 (Pull) — Incline Treadmill Walk", sets: "20 min, moderate pace" },
       { name: "Day 3 (Legs) — Incline Walk", sets: "15 min, moderate pace" },
-      { name: "Day 4 (Push Vol.2) — Cycle or Treadmill", sets: "25 min, steady pace" },
-      { name: "Day 5 (Pull Vol.2) — Cycle or Treadmill", sets: "25 min, steady pace" },
+      { name: "Day 4 (Push) — Cycle or Treadmill", sets: "25 min, steady pace" },
+      { name: "Day 5 (Pull) — Cycle or Treadmill", sets: "25 min, steady pace" },
       { name: "Day 6 (Legs) — Incline Walk or Cycle", sets: "30 min, steady pace" },
       { name: "Rest Day (optional) — Light walk outdoors", sets: "20-30 min, easy pace, purely for recovery" }
     ]
