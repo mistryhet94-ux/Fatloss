@@ -130,6 +130,7 @@ let currentView = 'workout'; // 'workout' | 'weight' | 'backup'
 let currentDay = 0;
 const dayState = {}; // dayIndex -> Set of checked exercise indices
 let exerciseLog = []; // {exercise_name, entry_date, weight, reps}
+const expandedHistory = new Set(); // exercise names with the history panel open
 
 function loadDayState(day) {
   if (!dayState[day]) dayState[day] = new Set();
@@ -159,6 +160,47 @@ async function saveExerciseLog(exerciseName, dateStr, weight, reps) {
     .from('exercise_log')
     .upsert({ user_id: currentUserId, exercise_name: exerciseName, entry_date: dateStr, weight, reps }, { onConflict: 'user_id,exercise_name,entry_date' });
   if (error) console.error('saveExerciseLog failed', error);
+}
+
+async function deleteExerciseLog(exerciseName, dateStr) {
+  if (!currentUserId) return;
+  const { error } = await sb
+    .from('exercise_log')
+    .delete()
+    .eq('user_id', currentUserId)
+    .eq('exercise_name', exerciseName)
+    .eq('entry_date', dateStr);
+  if (error) console.error('deleteExerciseLog failed', error);
+}
+
+// Suggests a next-session target. Only nudges the weight up once the same
+// weight has been logged for 2+ sessions in a row — otherwise it nudges reps.
+function computeSuggestedTarget(exerciseName) {
+  const entries = exerciseLog
+    .filter(e => e.exercise_name === exerciseName && e.weight != null)
+    .sort((a, b) => a.entry_date.localeCompare(b.entry_date));
+  if (!entries.length) return null;
+
+  const last = entries[entries.length - 1];
+  let sameWeightStreak = 0;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    if (entries[i].weight === last.weight) sameWeightStreak++;
+    else break;
+  }
+
+  if (sameWeightStreak >= 2) {
+    const increment = last.weight < 20 ? 1 : last.weight < 50 ? 2 : 2.5;
+    const nextWeight = Math.round((last.weight + increment) * 2) / 2;
+    return {
+      text: `Try: ${nextWeight}kg x ${last.reps ?? '-'}`,
+      note: `${sameWeightStreak} sessions at ${last.weight}kg — time to add weight`
+    };
+  }
+  const nextReps = last.reps ? last.reps + 1 : null;
+  return {
+    text: nextReps ? `Try: ${last.weight}kg x ${nextReps}` : `Try: ${last.weight}kg again`,
+    note: 'Add a rep before increasing weight'
+  };
 }
 
 /* ============ GYM CHECK-IN / STREAK ============ */
@@ -733,6 +775,12 @@ function renderDayContent() {
 
     if (!isCardioExercise(ex)) {
       const last = getLastLog(ex.name);
+      const suggestion = computeSuggestedTarget(ex.name);
+      const isOpen = expandedHistory.has(ex.name);
+      const history = exerciseLog
+        .filter(e => e.exercise_name === ex.name)
+        .sort((a, b) => b.entry_date.localeCompare(a.entry_date));
+
       const logWrap = document.createElement('div');
       logWrap.style.cssText = 'margin-top:8px; display:flex; gap:6px; align-items:center; flex-wrap:wrap;';
       logWrap.innerHTML = `
@@ -741,11 +789,73 @@ function renderDayContent() {
         <input type="number" placeholder="reps" style="width:56px; background:#1e222b; border:1px solid var(--border); color:var(--text); border-radius:6px; padding:6px; font-size:0.78rem;" class="log-reps-input">
         <button class="log-save-btn" style="background:transparent; border:1px solid var(--border); color:var(--accent2); border-radius:6px; padding:6px 10px; font-size:0.72rem; font-weight:700; cursor:pointer;">Save</button>
         <span class="log-last-note" style="color:var(--muted); font-size:0.7rem; width:100%;">${last ? `Last: ${last.weight ?? '-'}kg x ${last.reps ?? '-'} (${last.entry_date})` : 'No history yet'}</span>
+        ${suggestion ? `<span class="log-suggest-note" style="color:var(--gold); font-size:0.72rem; font-weight:700; width:100%;">🎯 ${suggestion.text} <span style="color:var(--muted); font-weight:400;">— ${suggestion.note}</span></span>` : ''}
+        ${history.length ? `<span class="history-toggle" style="color:var(--ember-lite); font-size:0.7rem; font-weight:700; cursor:pointer; width:100%;">${isOpen ? '▾ Hide history' : `▸ History (${history.length})`}</span>` : ''}
+        <div class="history-list" style="width:100%; ${isOpen ? '' : 'display:none;'}"></div>
       `;
       const weightInput = logWrap.querySelector('.log-weight-input');
       const repsInput = logWrap.querySelector('.log-reps-input');
       const saveBtn = logWrap.querySelector('.log-save-btn');
       const lastNote = logWrap.querySelector('.log-last-note');
+      const historyToggle = logWrap.querySelector('.history-toggle');
+      const historyListEl = logWrap.querySelector('.history-list');
+
+      function renderHistoryList() {
+        historyListEl.innerHTML = history.map(h => `
+          <div class="log-entry" data-date="${h.entry_date}">
+            <span>${h.weight ?? '-'}kg x ${h.reps ?? '-'}</span>
+            <span style="display:flex; align-items:center; gap:8px;">
+              <span class="date">${h.entry_date}</span>
+              <span class="hist-edit" style="cursor:pointer;">✎</span>
+              <span class="del">✕</span>
+            </span>
+          </div>
+        `).join('');
+        historyListEl.querySelectorAll('.log-entry').forEach(row => {
+          const ds = row.getAttribute('data-date');
+          row.querySelector('.hist-edit').onclick = async () => {
+            const entry = history.find(h => h.entry_date === ds);
+            const wStr = prompt('Weight (kg):', entry.weight ?? '');
+            if (wStr === null) return;
+            const rStr = prompt('Reps:', entry.reps ?? '');
+            if (rStr === null) return;
+            const w = parseFloat(wStr);
+            const r = parseInt(rStr, 10);
+            await saveExerciseLog(ex.name, ds, isNaN(w) ? null : w, isNaN(r) ? null : r);
+            await loadExerciseLog();
+            computePRFeed();
+            computeXP();
+            renderXPWidget();
+            renderWorkoutView();
+          };
+          row.querySelector('.del').onclick = async () => {
+            if (!confirm(`Delete the ${ds} entry for ${ex.name}?`)) return;
+            await deleteExerciseLog(ex.name, ds);
+            await loadExerciseLog();
+            computePRFeed();
+            computeXP();
+            renderXPWidget();
+            renderWorkoutView();
+          };
+        });
+      }
+      if (isOpen) renderHistoryList();
+
+      if (historyToggle) {
+        historyToggle.onclick = () => {
+          if (expandedHistory.has(ex.name)) {
+            expandedHistory.delete(ex.name);
+            historyListEl.style.display = 'none';
+            historyToggle.textContent = `▸ History (${history.length})`;
+          } else {
+            expandedHistory.add(ex.name);
+            historyListEl.style.display = '';
+            historyToggle.textContent = '▾ Hide history';
+            renderHistoryList();
+          }
+        };
+      }
+
       saveBtn.onclick = async () => {
         if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
         const w = parseFloat(weightInput.value);
@@ -763,10 +873,8 @@ function renderDayContent() {
         lastNote.textContent = `Last: ${w || '-'}kg x ${r || '-'} (${dateStr})`;
         weightInput.value = '';
         repsInput.value = '';
-        if (w && w > prevBest) {
-          celebratePR(ex.name, w);
-          renderWorkoutView();
-        }
+        renderWorkoutView();
+        if (w && w > prevBest) celebratePR(ex.name, w);
       };
       info.appendChild(logWrap);
     }
