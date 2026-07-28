@@ -345,9 +345,14 @@ function renderStreakWidget() {
     `;
   }
 
+  const tierClass = streaks.current >= 30 ? 'tier-gold' : streaks.current >= 7 ? 'tier-silver' : '';
+  const litClass = streaks.current > 0 ? 'lit' : '';
+
   el.innerHTML = `
-    <div class="streak-widget">
-      <div class="streak-flame ${streaks.current > 0 ? 'lit' : ''}">🔥</div>
+    <div class="streak-widget ${litClass} ${tierClass}">
+      <div class="streak-flame-wrap">
+        <div class="streak-flame ${litClass}">🔥</div>
+      </div>
       <div class="streak-nums">
         <div class="streak-current">${streaks.current}</div>
         <div class="streak-lbl">day streak · best ${streaks.best}</div>
