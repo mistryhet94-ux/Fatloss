@@ -578,3 +578,41 @@ h1 {
   background: linear-gradient(135deg, var(--gold), var(--volt));
   box-shadow: 0 6px 24px rgba(255,200,87,0.35);
 }
+
+/* ============ VS AVERAGE ============ */
+.vs-avg-widget {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 14px;
+  animation: riseIn 0.4s ease 0.1s both;
+}
+.vs-avg-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 0.75rem;
+  margin-bottom: 4px;
+}
+.vs-avg-title {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.vs-avg-stat {
+  font-family: var(--font-mono);
+  color: var(--volt);
+  font-size: 0.7rem;
+}
+.vs-avg-line {
+  font-size: 0.76rem;
+  color: var(--text);
+  line-height: 1.4;
+}
+.vs-avg-src {
+  color: var(--muted);
+  font-size: 0.68rem;
+}

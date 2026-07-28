@@ -370,6 +370,7 @@ async function handleCheckIn() {
     renderStreakWidget();
     computeXP();
     renderXPWidget();
+    renderVsAverageWidget();
   } catch (e) {
     if (e.message !== 'no-photo') { console.error('Check-in failed', e); alert('Check-in failed — see console.'); }
   }
@@ -398,6 +399,7 @@ async function handleCheckOut() {
     renderStreakWidget();
     computeXP();
     renderXPWidget();
+    renderVsAverageWidget();
     if (!wasCompleted && isDayCompleted(gymCheckins[date])) celebrateStreak();
   } catch (e) {
     if (e.message !== 'no-photo') { console.error('Check-out failed', e); alert('Check-out failed — see console.'); }
@@ -421,6 +423,7 @@ async function handleRestDay() {
   renderStreakWidget();
   computeXP();
   renderXPWidget();
+  renderVsAverageWidget();
 }
 
 function renderStreakWidget() {
@@ -554,6 +557,51 @@ function renderXPWidget() {
         <span class="xp-count">${nextLabel}</span>
       </div>
       <div class="xp-bar-bg"><div class="xp-bar-fill" style="width:${pct}%"></div></div>
+    </div>
+  `;
+}
+
+/* ============ YOU VS. AVERAGE GYM-GOER ============ */
+// Benchmark from published 2024-2025 industry survey data (HFA 2025 Benchmarking Report,
+// gitnux/market.us aggregation): average gym member trains ~1.5x/week; only an estimated
+// 18-20% of members hit 3+ sessions/week, and roughly 5% sustain 5+ sessions/week.
+// This is a rough motivational comparison, not a precise personal ranking.
+const BENCHMARK_WEEKLY_AVG = 1.5;
+
+function computeVsAverage() {
+  const today = new Date();
+  let last7 = 0, last28 = 0;
+  for (let i = 0; i < 28; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const ds = d.toISOString().slice(0, 10);
+    if (isDateCompleted(ds)) {
+      last28++;
+      if (i < 7) last7++;
+    }
+  }
+  return { last7, weeklyAvg28: last28 / 4 };
+}
+
+function percentileLine(weeklyAvg) {
+  if (weeklyAvg >= 5) return "training more than an estimated 95% of gym members 🚀";
+  if (weeklyAvg >= 3) return "training more than an estimated 80% of gym members 💪";
+  if (weeklyAvg >= BENCHMARK_WEEKLY_AVG) return "already ahead of the average gym member";
+  if (weeklyAvg >= 1) return "right around the average gym member";
+  return "just getting started — average members train ~1.5x/week";
+}
+
+function renderVsAverageWidget() {
+  const el = document.getElementById('vs-avg-widget');
+  if (!el) return;
+  const { last7, weeklyAvg28 } = computeVsAverage();
+  el.innerHTML = `
+    <div class="vs-avg-widget">
+      <div class="vs-avg-top">
+        <span class="vs-avg-title">📊 You vs. Average</span>
+        <span class="vs-avg-stat">${last7}x this week · ${weeklyAvg28.toFixed(1)}/wk (4-wk avg)</span>
+      </div>
+      <div class="vs-avg-line">You're ${percentileLine(weeklyAvg28)}<span class="vs-avg-src"> · avg gym member trains ~1.5x/week</span></div>
     </div>
   `;
 }
@@ -1313,6 +1361,7 @@ async function startApp() {
     renderView();
     renderStreakWidget();
     renderXPWidget();
+    renderVsAverageWidget();
     if (pendingFreezeToast) { celebrateFreezeUsed(); pendingFreezeToast = false; }
     if (authFailed) {
       const banner = document.createElement('div');
