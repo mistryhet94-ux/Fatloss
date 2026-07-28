@@ -101,3 +101,21 @@ create policy "own gym photos write" on storage.objects
 
 create policy "own gym photos delete" on storage.objects
   for delete using (bucket_id = 'gym-photos' and auth.uid()::text = (storage.foldername(name))[1]);
+
+-- Streak freeze balance + usage tracking (fun features: XP is computed client-side
+-- from existing tables, no schema needed there)
+alter table profile add column if not exists freezes_earned int not null default 0;
+alter table profile add column if not exists last_freeze_milestone int not null default 0;
+
+create table if not exists streak_freeze_uses (
+  id bigint generated always as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  entry_date date not null,
+  created_at timestamptz default now(),
+  unique (user_id, entry_date)
+);
+
+alter table streak_freeze_uses enable row level security;
+
+create policy "own streak freezes" on streak_freeze_uses
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

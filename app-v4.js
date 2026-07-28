@@ -163,7 +163,9 @@ async function saveExerciseLog(exerciseName, dateStr, weight, reps) {
 
 /* ============ GYM CHECK-IN / STREAK ============ */
 let gymCheckins = {}; // entry_date -> row
+let freezeUses = {}; // entry_date -> true (a missed day patched by a streak freeze)
 let streaks = { current: 0, best: 0 };
+let pendingFreezeToast = false;
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -181,14 +183,81 @@ async function loadGymCheckins() {
   (data || []).forEach(r => { gymCheckins[r.entry_date] = r; });
 }
 
+async function loadFreezeUses() {
+  if (!currentUserId) { freezeUses = {}; return; }
+  const { data, error } = await sb
+    .from('streak_freeze_uses')
+    .select('entry_date')
+    .eq('user_id', currentUserId);
+  if (error) { console.error('loadFreezeUses failed', error); freezeUses = {}; return; }
+  freezeUses = {};
+  (data || []).forEach(r => { freezeUses[r.entry_date] = true; });
+}
+
 function isDayCompleted(row) {
   if (!row) return false;
   if (row.is_rest_day) return true;
   return !!(row.check_in_photo_path && row.check_out_photo_path);
 }
 
+function isDateCompleted(ds) {
+  return isDayCompleted(gymCheckins[ds]) || !!freezeUses[ds];
+}
+
+// Auto-patches single-day gaps in the streak using earned freezes (never touches today).
+async function applyStreakFreezes() {
+  if (!currentUserId) return;
+  const earned = profile.freezesEarned || 0;
+  const used = Object.keys(freezeUses).length;
+  let available = Math.min(3, earned - used);
+  if (available <= 0) return;
+
+  const completedSet = new Set(Object.keys(gymCheckins).filter(d => isDayCompleted(gymCheckins[d])));
+  Object.keys(freezeUses).forEach(d => completedSet.add(d));
+
+  const cursor = new Date();
+  cursor.setDate(cursor.getDate() - 1); // never freeze today — it's still in progress
+  for (let i = 0; i < 60 && available > 0; i++) {
+    const ds = cursor.toISOString().slice(0, 10);
+    const prev = new Date(cursor); prev.setDate(prev.getDate() - 1);
+    const next = new Date(cursor); next.setDate(next.getDate() + 1);
+    const prevStr = prev.toISOString().slice(0, 10);
+    const nextStr = next.toISOString().slice(0, 10);
+    if (!completedSet.has(ds) && completedSet.has(prevStr) && completedSet.has(nextStr)) {
+      const { error } = await sb.from('streak_freeze_uses')
+        .upsert({ user_id: currentUserId, entry_date: ds }, { onConflict: 'user_id,entry_date', ignoreDuplicates: true });
+      if (!error) {
+        freezeUses[ds] = true;
+        completedSet.add(ds);
+        available--;
+        pendingFreezeToast = true;
+      }
+    }
+    cursor.setDate(cursor.getDate() - 1);
+  }
+}
+
+async function checkFreezeAward() {
+  if (!currentUserId) return;
+  const milestone = Math.floor(streaks.best / 14) * 14;
+  const last = profile.lastFreezeMilestone || 0;
+  if (milestone > last && milestone > 0) {
+    const gained = Math.floor((milestone - last) / 14);
+    const newEarned = (profile.freezesEarned || 0) + gained;
+    const { error } = await sb.from('profile').update({
+      freezes_earned: newEarned,
+      last_freeze_milestone: milestone
+    }).eq('user_id', currentUserId);
+    if (!error) {
+      profile.freezesEarned = newEarned;
+      profile.lastFreezeMilestone = milestone;
+    }
+  }
+}
+
 function computeStreaks() {
-  const completedDates = Object.keys(gymCheckins).filter(d => isDayCompleted(gymCheckins[d])).sort();
+  const allDates = new Set([...Object.keys(gymCheckins), ...Object.keys(freezeUses)]);
+  const completedDates = [...allDates].filter(isDateCompleted).sort();
   const set = new Set(completedDates);
   const today = todayStr();
 
@@ -256,6 +325,30 @@ function celebrateStreak() {
   }, 2600);
 }
 
+function celebrateFreezeUsed() {
+  const toast = document.createElement('div');
+  toast.className = 'streak-toast pr-toast';
+  toast.textContent = `🧊 Freeze used — streak protected!`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 400);
+  }, 2600);
+}
+
+function celebratePR(name, weight) {
+  const toast = document.createElement('div');
+  toast.className = 'streak-toast pr-toast';
+  toast.textContent = `🏆 New PR! ${name} — ${weight}kg`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 400);
+  }, 2600);
+}
+
 async function handleCheckIn() {
   if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
   const date = todayStr();
@@ -275,6 +368,8 @@ async function handleCheckIn() {
     await loadGymCheckins();
     computeStreaks();
     renderStreakWidget();
+    computeXP();
+    renderXPWidget();
   } catch (e) {
     if (e.message !== 'no-photo') { console.error('Check-in failed', e); alert('Check-in failed — see console.'); }
   }
@@ -299,7 +394,10 @@ async function handleCheckOut() {
     const wasCompleted = isDayCompleted(existing);
     await loadGymCheckins();
     computeStreaks();
+    await checkFreezeAward();
     renderStreakWidget();
+    computeXP();
+    renderXPWidget();
     if (!wasCompleted && isDayCompleted(gymCheckins[date])) celebrateStreak();
   } catch (e) {
     if (e.message !== 'no-photo') { console.error('Check-out failed', e); alert('Check-out failed — see console.'); }
@@ -319,7 +417,10 @@ async function handleRestDay() {
   if (error) { console.error('Rest day save failed', error); return; }
   await loadGymCheckins();
   computeStreaks();
+  await checkFreezeAward();
   renderStreakWidget();
+  computeXP();
+  renderXPWidget();
 }
 
 function renderStreakWidget() {
@@ -347,6 +448,7 @@ function renderStreakWidget() {
 
   const tierClass = streaks.current >= 30 ? 'tier-gold' : streaks.current >= 7 ? 'tier-silver' : '';
   const litClass = streaks.current > 0 ? 'lit' : '';
+  const freezeBalance = Math.max(0, Math.min(3, (profile.freezesEarned || 0) - Object.keys(freezeUses).length));
 
   el.innerHTML = `
     <div class="streak-widget ${litClass} ${tierClass}">
@@ -355,7 +457,7 @@ function renderStreakWidget() {
       </div>
       <div class="streak-nums">
         <div class="streak-current">${streaks.current}</div>
-        <div class="streak-lbl">day streak · best ${streaks.best}</div>
+        <div class="streak-lbl">day streak · best ${streaks.best}${freezeBalance > 0 ? ` · 🧊×${freezeBalance}` : ''}</div>
       </div>
       <div class="streak-actions">${actionsHtml}</div>
     </div>
@@ -366,6 +468,94 @@ function renderStreakWidget() {
   if (inBtn) inBtn.onclick = handleCheckIn;
   if (outBtn) outBtn.onclick = handleCheckOut;
   if (restBtn) restBtn.onclick = handleRestDay;
+}
+
+/* ============ PR FEED (derived from exercise_log — no new table) ============ */
+let prFeed = []; // most recent first
+
+function computePRFeed() {
+  const sorted = [...exerciseLog]
+    .filter(e => e.weight != null)
+    .sort((a, b) => a.entry_date.localeCompare(b.entry_date));
+  const runningMax = {};
+  const prs = [];
+  sorted.forEach(e => {
+    const prevMax = runningMax[e.exercise_name];
+    if (prevMax === undefined || e.weight > prevMax) {
+      prs.push({ exercise_name: e.exercise_name, entry_date: e.entry_date, weight: e.weight, reps: e.reps });
+      runningMax[e.exercise_name] = e.weight;
+    }
+  });
+  prFeed = prs.reverse().slice(0, 8);
+}
+
+function renderPRFeedCard() {
+  if (!prFeed.length) return null;
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.innerHTML = `
+    <div class="card-title">🏆 Recent PRs</div>
+    ${prFeed.slice(0, 4).map(p => `
+      <div class="log-entry">
+        <span>${p.exercise_name}</span>
+        <span><b style="color:var(--gold)">${p.weight}kg</b>${p.reps ? ` x ${p.reps}` : ''} <span class="date">${p.entry_date}</span></span>
+      </div>
+    `).join('')}
+  `;
+  return card;
+}
+
+/* ============ XP / LEVELS (derived from existing data — no new table) ============ */
+const LEVELS = [
+  { name: 'Recruit', xp: 0 },
+  { name: 'Grinder', xp: 150 },
+  { name: 'Builder', xp: 400 },
+  { name: 'Machine', xp: 800 },
+  { name: 'Beast', xp: 1500 },
+  { name: 'Titan', xp: 2600 },
+  { name: 'Legend', xp: 4200 }
+];
+let xp = { total: 0, level: 1, levelName: 'Recruit', currentFloor: 0, nextCeil: 150 };
+
+function computeXP() {
+  const completedDays = Object.keys(gymCheckins).filter(d => isDayCompleted(gymCheckins[d])).length
+                      + Object.keys(freezeUses).length;
+  const exercisesLogged = exerciseLog.filter(e => e.weight != null || e.reps != null).length;
+  const weighIns = weightLog.length;
+  const prCount = prFeed.length;
+  const milestoneBonus = Math.floor(streaks.best / 7) * 50;
+
+  const total = completedDays * 10 + exercisesLogged * 5 + weighIns * 5 + prCount * 50 + milestoneBonus;
+
+  let levelIdx = 0;
+  for (let i = 0; i < LEVELS.length; i++) {
+    if (total >= LEVELS[i].xp) levelIdx = i;
+  }
+  xp = {
+    total,
+    level: levelIdx + 1,
+    levelName: LEVELS[levelIdx].name,
+    currentFloor: LEVELS[levelIdx].xp,
+    nextCeil: LEVELS[levelIdx + 1] ? LEVELS[levelIdx + 1].xp : null
+  };
+}
+
+function renderXPWidget() {
+  const el = document.getElementById('xp-widget');
+  if (!el) return;
+  const pct = xp.nextCeil
+    ? Math.min(100, Math.round(((xp.total - xp.currentFloor) / (xp.nextCeil - xp.currentFloor)) * 100))
+    : 100;
+  const nextLabel = xp.nextCeil ? `${xp.total}/${xp.nextCeil} XP` : `${xp.total} XP · Max level`;
+  el.innerHTML = `
+    <div class="xp-widget">
+      <div class="xp-top">
+        <span class="xp-level">Lvl ${xp.level} · ${xp.levelName}</span>
+        <span class="xp-count">${nextLabel}</span>
+      </div>
+      <div class="xp-bar-bg"><div class="xp-bar-fill" style="width:${pct}%"></div></div>
+    </div>
+  `;
 }
 
 /* ============ MAIN NAV ============ */
@@ -410,6 +600,9 @@ async function renderWorkoutView() {
     <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-fill"></div></div>
   `;
   root.appendChild(progressWrap);
+
+  const prCard = renderPRFeedCard();
+  if (prCard) root.appendChild(prCard);
 
   const tabsEl = document.createElement('div');
   tabsEl.className = 'tabs';
@@ -512,12 +705,22 @@ function renderDayContent() {
         const w = parseFloat(weightInput.value);
         const r = parseInt(repsInput.value, 10);
         if (!w && !r) return;
-        const todayStr = new Date().toISOString().slice(0, 10);
-        await saveExerciseLog(ex.name, todayStr, w || null, r || null);
+        const dateStr = new Date().toISOString().slice(0, 10);
+        const prevBest = Math.max(0, ...exerciseLog
+          .filter(e => e.exercise_name === ex.name && e.weight != null)
+          .map(e => e.weight));
+        await saveExerciseLog(ex.name, dateStr, w || null, r || null);
         await loadExerciseLog();
-        lastNote.textContent = `Last: ${w || '-'}kg x ${r || '-'} (${todayStr})`;
+        computePRFeed();
+        computeXP();
+        renderXPWidget();
+        lastNote.textContent = `Last: ${w || '-'}kg x ${r || '-'} (${dateStr})`;
         weightInput.value = '';
         repsInput.value = '';
+        if (w && w > prevBest) {
+          celebratePR(ex.name, w);
+          renderWorkoutView();
+        }
       };
       info.appendChild(logWrap);
     }
@@ -597,7 +800,7 @@ function startRestTimer(exerciseName) {
 }
 
 /* ============ PROFILE (for calorie calc) ============ */
-let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, height: 176 };
+let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, height: 176, freezesEarned: 0, lastFreezeMilestone: 0 };
 
 async function loadProfile() {
   if (!currentUserId) return;
@@ -613,7 +816,9 @@ async function loadProfile() {
       sex: data.sex ?? 'male',
       currentWeight: data.current_weight ?? 75,
       height: data.height ?? 176,
-      activity: String(data.activity ?? 1.375)
+      activity: String(data.activity ?? 1.375),
+      freezesEarned: data.freezes_earned ?? 0,
+      lastFreezeMilestone: data.last_freeze_milestone ?? 0
     };
   }
 }
@@ -761,6 +966,8 @@ async function renderWeightView() {
       await saveProfile();
     }
     await loadWeightLog();
+    computeXP();
+    renderXPWidget();
     renderWeightView();
   };
 }
@@ -1093,11 +1300,20 @@ async function startApp() {
     if (currentUserId) {
       await loadProfile();
       await loadGymCheckins();
+      await loadFreezeUses();
+      await loadExerciseLog();
+      await loadWeightLog();
+      await applyStreakFreezes();
       computeStreaks();
+      await checkFreezeAward();
+      computePRFeed();
+      computeXP();
     }
     renderMainNav();
     renderView();
     renderStreakWidget();
+    renderXPWidget();
+    if (pendingFreezeToast) { celebrateFreezeUsed(); pendingFreezeToast = false; }
     if (authFailed) {
       const banner = document.createElement('div');
       banner.style.cssText = 'background:rgba(255,106,61,0.15);border:1px solid rgba(255,106,61,0.4);color:#ffb08a;border-radius:8px;padding:10px 12px;font-size:0.78rem;margin-bottom:12px;';
