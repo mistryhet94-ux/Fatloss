@@ -126,7 +126,7 @@ const plan = [
   }
 ];
 
-let currentView = 'workout'; // 'workout' | 'weight' | 'calories' | 'backup'
+let currentView = 'workout'; // 'workout' | 'weight' | 'backup'
 let currentDay = 0;
 const dayState = {}; // dayIndex -> Set of checked exercise indices
 let exerciseLog = []; // {exercise_name, entry_date, weight, reps}
@@ -613,7 +613,6 @@ function renderMainNav() {
   const views = [
     { id: 'workout', label: 'Workout' },
     { id: 'weight', label: 'Weight Log' },
-    { id: 'calories', label: 'Calories' },
     { id: 'backup', label: 'Backup' }
   ];
   views.forEach(v => {
@@ -628,7 +627,6 @@ function renderMainNav() {
 function renderView() {
   if (currentView === 'workout') renderWorkoutView();
   else if (currentView === 'weight') renderWeightView();
-  else if (currentView === 'calories') renderCaloriesView();
   else if (currentView === 'backup') renderBackupView();
 }
 
