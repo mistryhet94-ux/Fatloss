@@ -270,3 +270,95 @@
     color: #ffb08a;
     margin-top: 8px;
   }
+
+  /* ============ STREAK WIDGET ============ */
+  .streak-widget {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .streak-flame {
+    font-size: 1.6rem;
+    filter: grayscale(1) opacity(0.4);
+    flex-shrink: 0;
+  }
+  .streak-flame.lit {
+    filter: none;
+    animation: flame-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes flame-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.18); }
+  }
+  .streak-nums { min-width: 0; }
+  .streak-current {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: var(--accent2);
+    line-height: 1;
+  }
+  .streak-lbl {
+    font-size: 0.68rem;
+    color: var(--muted);
+    margin-top: 2px;
+    white-space: nowrap;
+  }
+  .streak-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-left: auto;
+  }
+  .streak-btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 7px;
+    padding: 7px 10px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .streak-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .streak-btn.secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .streak-status {
+    font-size: 0.78rem;
+    color: var(--accent2);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .streak-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    transform: translate(-50%, 20px);
+    background: var(--accent);
+    color: #fff;
+    font-weight: 700;
+    font-size: 0.85rem;
+    padding: 10px 16px;
+    border-radius: 10px;
+    opacity: 0;
+    transition: all 0.3s ease;
+    z-index: 9999;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    white-space: nowrap;
+  }
+  .streak-toast.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }

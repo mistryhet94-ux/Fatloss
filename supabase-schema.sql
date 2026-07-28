@@ -65,3 +65,39 @@ alter table exercise_log enable row level security;
 
 create policy "own exercise log" on exercise_log
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Gym check-in / check-out with photo proof (streak feature)
+create table gym_checkins (
+  id bigint generated always as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  entry_date date not null,
+  check_in_time timestamptz,
+  check_in_photo_path text,
+  check_out_time timestamptz,
+  check_out_photo_path text,
+  is_rest_day boolean not null default false,
+  updated_at timestamptz default now(),
+  unique (user_id, entry_date)
+);
+
+alter table gym_checkins enable row level security;
+
+create policy "own gym checkins" on gym_checkins
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Private storage bucket for check-in/check-out photos.
+-- If this insert fails (some Supabase projects restrict SQL access to storage.buckets),
+-- create it manually instead: Dashboard → Storage → New bucket → name "gym-photos" → Private.
+insert into storage.buckets (id, name, public)
+values ('gym-photos', 'gym-photos', false)
+on conflict (id) do nothing;
+
+-- Photos are stored at path "{user_id}/...", so this restricts each user to their own folder.
+create policy "own gym photos read" on storage.objects
+  for select using (bucket_id = 'gym-photos' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "own gym photos write" on storage.objects
+  for insert with check (bucket_id = 'gym-photos' and auth.uid()::text = (storage.foldername(name))[1]);
+
+create policy "own gym photos delete" on storage.objects
+  for delete using (bucket_id = 'gym-photos' and auth.uid()::text = (storage.foldername(name))[1]);

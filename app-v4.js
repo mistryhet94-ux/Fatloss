@@ -161,6 +161,208 @@ async function saveExerciseLog(exerciseName, dateStr, weight, reps) {
   if (error) console.error('saveExerciseLog failed', error);
 }
 
+/* ============ GYM CHECK-IN / STREAK ============ */
+let gymCheckins = {}; // entry_date -> row
+let streaks = { current: 0, best: 0 };
+
+function todayStr() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+async function loadGymCheckins() {
+  if (!currentUserId) { gymCheckins = {}; return; }
+  const { data, error } = await sb
+    .from('gym_checkins')
+    .select('entry_date, check_in_time, check_in_photo_path, check_out_time, check_out_photo_path, is_rest_day')
+    .eq('user_id', currentUserId)
+    .order('entry_date', { ascending: true });
+  if (error) { console.error('loadGymCheckins failed', error); gymCheckins = {}; return; }
+  gymCheckins = {};
+  (data || []).forEach(r => { gymCheckins[r.entry_date] = r; });
+}
+
+function isDayCompleted(row) {
+  if (!row) return false;
+  if (row.is_rest_day) return true;
+  return !!(row.check_in_photo_path && row.check_out_photo_path);
+}
+
+function computeStreaks() {
+  const completedDates = Object.keys(gymCheckins).filter(d => isDayCompleted(gymCheckins[d])).sort();
+  const set = new Set(completedDates);
+  const today = todayStr();
+
+  let current = 0;
+  const cursor = new Date();
+  if (!set.has(today)) cursor.setDate(cursor.getDate() - 1);
+  while (set.has(cursor.toISOString().slice(0, 10))) {
+    current++;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  let best = 0, run = 0, prev = null;
+  completedDates.forEach(ds => {
+    if (prev) {
+      const diff = Math.round((new Date(ds) - new Date(prev)) / 86400000);
+      run = diff === 1 ? run + 1 : 1;
+    } else {
+      run = 1;
+    }
+    if (run > best) best = run;
+    prev = ds;
+  });
+  best = Math.max(best, current);
+
+  streaks = { current, best };
+}
+
+function captureGymPhoto() {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment';
+    input.style.display = 'none';
+    input.onchange = () => {
+      const file = input.files && input.files[0];
+      if (input.parentNode) document.body.removeChild(input);
+      if (file) resolve(file); else reject(new Error('no-photo'));
+    };
+    document.body.appendChild(input);
+    input.click();
+  });
+}
+
+async function uploadGymPhoto(file, kind) {
+  const date = todayStr();
+  const path = `${currentUserId}/${date}-${kind}-${Date.now()}.jpg`;
+  const { error } = await sb.storage.from('gym-photos').upload(path, file, {
+    upsert: true,
+    contentType: file.type || 'image/jpeg'
+  });
+  if (error) throw error;
+  return path;
+}
+
+function celebrateStreak() {
+  const toast = document.createElement('div');
+  toast.className = 'streak-toast';
+  toast.textContent = `🔥 Day complete! ${streaks.current}-day streak`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 400);
+  }, 2600);
+}
+
+async function handleCheckIn() {
+  if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+  const date = todayStr();
+  const existing = gymCheckins[date];
+  if (existing && existing.check_in_photo_path) return;
+  try {
+    const file = await captureGymPhoto();
+    const path = await uploadGymPhoto(file, 'checkin');
+    const { error } = await sb.from('gym_checkins').upsert({
+      user_id: currentUserId,
+      entry_date: date,
+      check_in_time: new Date().toISOString(),
+      check_in_photo_path: path,
+      is_rest_day: false
+    }, { onConflict: 'user_id,entry_date' });
+    if (error) throw error;
+    await loadGymCheckins();
+    computeStreaks();
+    renderStreakWidget();
+  } catch (e) {
+    if (e.message !== 'no-photo') { console.error('Check-in failed', e); alert('Check-in failed — see console.'); }
+  }
+}
+
+async function handleCheckOut() {
+  if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+  const date = todayStr();
+  const existing = gymCheckins[date];
+  if (!existing || !existing.check_in_photo_path) { alert("Check in first."); return; }
+  if (existing.check_out_photo_path) return;
+  try {
+    const file = await captureGymPhoto();
+    const path = await uploadGymPhoto(file, 'checkout');
+    const { error } = await sb.from('gym_checkins').upsert({
+      user_id: currentUserId,
+      entry_date: date,
+      check_out_time: new Date().toISOString(),
+      check_out_photo_path: path
+    }, { onConflict: 'user_id,entry_date' });
+    if (error) throw error;
+    const wasCompleted = isDayCompleted(existing);
+    await loadGymCheckins();
+    computeStreaks();
+    renderStreakWidget();
+    if (!wasCompleted && isDayCompleted(gymCheckins[date])) celebrateStreak();
+  } catch (e) {
+    if (e.message !== 'no-photo') { console.error('Check-out failed', e); alert('Check-out failed — see console.'); }
+  }
+}
+
+async function handleRestDay() {
+  if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+  const date = todayStr();
+  if (gymCheckins[date]) return;
+  if (!confirm("Mark today as a rest day? This keeps your streak alive without a gym check-in.")) return;
+  const { error } = await sb.from('gym_checkins').upsert({
+    user_id: currentUserId,
+    entry_date: date,
+    is_rest_day: true
+  }, { onConflict: 'user_id,entry_date' });
+  if (error) { console.error('Rest day save failed', error); return; }
+  await loadGymCheckins();
+  computeStreaks();
+  renderStreakWidget();
+}
+
+function renderStreakWidget() {
+  const el = document.getElementById('streak-widget');
+  if (!el) return;
+  const date = todayStr();
+  const today = gymCheckins[date];
+  const checkedIn = !!(today && today.check_in_photo_path);
+  const checkedOut = !!(today && today.check_out_photo_path);
+  const isRest = !!(today && today.is_rest_day);
+  const doneToday = isDayCompleted(today);
+
+  let actionsHtml;
+  if (isRest) {
+    actionsHtml = '<span class="streak-status">😴 Rest day logged</span>';
+  } else if (doneToday) {
+    actionsHtml = '<span class="streak-status">✅ Today locked in</span>';
+  } else {
+    actionsHtml = `
+      <button class="streak-btn" id="btn-checkin" ${checkedIn ? 'disabled' : ''}>${checkedIn ? '✅ Checked in' : '📸 Check In'}</button>
+      <button class="streak-btn" id="btn-checkout" ${(!checkedIn || checkedOut) ? 'disabled' : ''}>${checkedOut ? '✅ Checked out' : '📸 Check Out'}</button>
+      ${!checkedIn ? '<button class="streak-btn secondary" id="btn-rest">Rest day</button>' : ''}
+    `;
+  }
+
+  el.innerHTML = `
+    <div class="streak-widget">
+      <div class="streak-flame ${streaks.current > 0 ? 'lit' : ''}">🔥</div>
+      <div class="streak-nums">
+        <div class="streak-current">${streaks.current}</div>
+        <div class="streak-lbl">day streak · best ${streaks.best}</div>
+      </div>
+      <div class="streak-actions">${actionsHtml}</div>
+    </div>
+  `;
+  const inBtn = document.getElementById('btn-checkin');
+  const outBtn = document.getElementById('btn-checkout');
+  const restBtn = document.getElementById('btn-rest');
+  if (inBtn) inBtn.onclick = handleCheckIn;
+  if (outBtn) outBtn.onclick = handleCheckOut;
+  if (restBtn) restBtn.onclick = handleRestDay;
+}
+
 /* ============ MAIN NAV ============ */
 function renderMainNav() {
   const nav = document.getElementById('main-nav');
@@ -885,9 +1087,12 @@ async function startApp() {
     await ensureAuth();
     if (currentUserId) {
       await loadProfile();
+      await loadGymCheckins();
+      computeStreaks();
     }
     renderMainNav();
     renderView();
+    renderStreakWidget();
     if (authFailed) {
       const banner = document.createElement('div');
       banner.style.cssText = 'background:rgba(255,106,61,0.15);border:1px solid rgba(255,106,61,0.4);color:#ffb08a;border-radius:8px;padding:10px 12px;font-size:0.78rem;margin-bottom:12px;';
