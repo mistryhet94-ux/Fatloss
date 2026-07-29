@@ -140,3 +140,7 @@ create policy "own challenges" on user_challenges
 create unique index if not exists one_active_challenge_per_user
   on user_challenges (user_id)
   where status = 'active';
+
+-- Challenge Points wallet + tracking whether a rest day was purchased
+alter table profile add column if not exists challenge_points int not null default 0;
+alter table gym_checkins add column if not exists purchased_rest boolean not null default false;

@@ -217,7 +217,7 @@ async function loadGymCheckins() {
   if (!currentUserId) { gymCheckins = {}; return; }
   const { data, error } = await sb
     .from('gym_checkins')
-    .select('entry_date, check_in_time, check_in_photo_path, check_out_time, check_out_photo_path, is_rest_day')
+    .select('entry_date, check_in_time, check_in_photo_path, check_out_time, check_out_photo_path, is_rest_day, purchased_rest')
     .eq('user_id', currentUserId)
     .order('entry_date', { ascending: true });
   if (error) { console.error('loadGymCheckins failed', error); gymCheckins = {}; return; }
@@ -391,6 +391,18 @@ function celebratePR(name, weight) {
   }, 2600);
 }
 
+function celebrateChallengeComplete(tmpl, reward) {
+  const toast = document.createElement('div');
+  toast.className = 'streak-toast pr-toast';
+  toast.textContent = `🏁 ${tmpl.name} complete! +${reward} Challenge Points`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 400);
+  }, 3200);
+}
+
 async function handleCheckIn() {
   if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
   const date = todayStr();
@@ -453,32 +465,40 @@ async function handleRestDay() {
   const date = todayStr();
   if (gymCheckins[date]) return;
 
+  let purchased = false;
+  let cost = 0;
   if (activeChallenge) {
     const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
-    if (tmpl && !tmpl.allowRest) {
-      alert(`"${tmpl.name}" doesn't allow rest days — check in today to keep the challenge alive!`);
-      return;
-    }
-    if (tmpl && tmpl.minRestGap) {
-      const restDates = Object.keys(gymCheckins).filter(d => gymCheckins[d].is_rest_day).sort();
-      const lastRest = restDates.length ? restDates[restDates.length - 1] : null;
-      if (lastRest) {
-        const gapDays = Math.round((new Date(date) - new Date(lastRest)) / 86400000);
-        if (gapDays < tmpl.minRestGap) {
-          alert(`During "${tmpl.name}", rest days must be at least ${tmpl.minRestGap} days apart. Your last rest day was ${lastRest}.`);
-          return;
-        }
+    const elig = checkFreeRestEligibility();
+    if (!elig.eligible) {
+      if (!tmpl) return;
+      cost = restDayPurchaseCost(tmpl);
+      const have = profile.challengePoints || 0;
+      if (have < cost) {
+        alert(`${elig.reason} Buying a rest day here costs ${cost} Challenge Points — you have ${have}.`);
+        return;
       }
+      if (!confirm(`${elig.reason}\n\nSpend ${cost} Challenge Points to buy a rest day today? (You have ${have})`)) return;
+      purchased = true;
     }
   }
 
-  if (!confirm("Mark today as a rest day? This keeps your streak alive without a gym check-in.")) return;
+  if (!purchased && !confirm("Mark today as a rest day? This keeps your streak alive without a gym check-in.")) return;
+
   const { error } = await sb.from('gym_checkins').upsert({
     user_id: currentUserId,
     entry_date: date,
-    is_rest_day: true
+    is_rest_day: true,
+    purchased_rest: purchased
   }, { onConflict: 'user_id,entry_date' });
   if (error) { console.error('Rest day save failed', error); return; }
+
+  if (purchased) {
+    const newPoints = (profile.challengePoints || 0) - cost;
+    const { error: ptErr } = await sb.from('profile').update({ challenge_points: newPoints }).eq('user_id', currentUserId);
+    if (!ptErr) profile.challengePoints = newPoints;
+  }
+
   await loadGymCheckins();
   computeStreaks();
   await checkFreezeAward();
@@ -501,14 +521,21 @@ function renderStreakWidget() {
 
   let actionsHtml;
   if (isRest) {
-    actionsHtml = '<span class="streak-status">😴 Rest day logged</span>';
+    const purchasedNote = today.purchased_rest ? ' (purchased)' : '';
+    actionsHtml = `<span class="streak-status">😴 Rest day logged${purchasedNote}</span>`;
   } else if (doneToday) {
     actionsHtml = '<span class="streak-status">✅ Today locked in</span>';
   } else {
+    let restLabel = 'Rest day';
+    if (!checkedIn && activeChallenge) {
+      const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
+      const elig = checkFreeRestEligibility();
+      if (tmpl && !elig.eligible) restLabel = `💰 Buy rest (${restDayPurchaseCost(tmpl)}CP)`;
+    }
     actionsHtml = `
       <button class="streak-btn" id="btn-checkin" ${checkedIn ? 'disabled' : ''}>${checkedIn ? '✅ Checked in' : '📸 Check In'}</button>
       <button class="streak-btn" id="btn-checkout" ${(!checkedIn || checkedOut) ? 'disabled' : ''}>${checkedOut ? '✅ Checked out' : '📸 Check Out'}</button>
-      ${!checkedIn ? '<button class="streak-btn secondary" id="btn-rest">Rest day</button>' : ''}
+      ${!checkedIn ? `<button class="streak-btn secondary" id="btn-rest">${restLabel}</button>` : ''}
     `;
   }
 
@@ -536,7 +563,7 @@ function renderStreakWidget() {
       </div>
       <div class="streak-nums">
         <div class="streak-current">${streaks.current}</div>
-        <div class="streak-lbl">day streak · best ${streaks.best}${freezeBalance > 0 ? ` · 🧊×${freezeBalance}` : ''}${challengeBadge}</div>
+        <div class="streak-lbl">day streak · best ${streaks.best}${freezeBalance > 0 ? ` · 🧊×${freezeBalance}` : ''}${(profile.challengePoints || 0) > 0 ? ` · 💰${profile.challengePoints}CP` : ''}${challengeBadge}</div>
       </div>
       <div class="streak-actions">${actionsHtml}</div>
     </div>
@@ -685,7 +712,7 @@ function renderVsAverageWidget() {
 /* ============ CHALLENGES ============ */
 const CHALLENGE_TEMPLATES = [
   { id: '7-day-gym', name: '7 Days of Gym', days: 7, allowRest: false, minRestGap: null,
-    desc: 'Check in and out 7 days straight. No rest days allowed.' },
+    desc: 'Check in and out 7 days straight. Free rest days aren\'t allowed — but you can buy one with Challenge Points.' },
   { id: '14-day-momentum', name: '14-Day Momentum', days: 14, allowRest: true, minRestGap: 3,
     desc: '14 days of consistency. Rest days allowed, but must be at least 3 days apart.' },
   { id: '21-day-habit', name: '21-Day Habit Builder', days: 21, allowRest: true, minRestGap: 3,
@@ -696,6 +723,32 @@ const CHALLENGE_TEMPLATES = [
 
 function getChallengeTemplate(id) {
   return CHALLENGE_TEMPLATES.find(t => t.id === id);
+}
+
+// Harder/stricter challenges pay out more Challenge Points on completion,
+// and cost more Challenge Points to buy your way out of a rest day.
+const CHALLENGE_DIFFICULTY = { '7-day-gym': 4, '14-day-momentum': 1, '21-day-habit': 2, '30-day-commit': 3 };
+function challengeDifficulty(tmpl) { return CHALLENGE_DIFFICULTY[tmpl.id] || 1; }
+function challengeReward(tmpl) { return challengeDifficulty(tmpl) * 50; }
+function restDayPurchaseCost(tmpl) { return challengeDifficulty(tmpl) * 40; }
+
+// Would today's rest day be free under the active challenge's own rules?
+function checkFreeRestEligibility() {
+  if (!activeChallenge) return { eligible: true };
+  const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
+  if (!tmpl) return { eligible: true };
+  if (!tmpl.allowRest) return { eligible: false, reason: `"${tmpl.name}" doesn't allow free rest days.` };
+  if (tmpl.minRestGap) {
+    const restDates = Object.keys(gymCheckins).filter(d => gymCheckins[d].is_rest_day).sort();
+    const lastRest = restDates.length ? restDates[restDates.length - 1] : null;
+    if (lastRest) {
+      const gapDays = Math.round((new Date(todayStr()) - new Date(lastRest)) / 86400000);
+      if (gapDays < tmpl.minRestGap) {
+        return { eligible: false, reason: `Rest days must be ${tmpl.minRestGap}+ days apart during "${tmpl.name}". Last was ${lastRest}.` };
+      }
+    }
+  }
+  return { eligible: true };
 }
 
 let userChallenges = [];
@@ -734,7 +787,9 @@ async function evaluateActiveChallenge() {
     d.setDate(d.getDate() + i);
     const ds = d.toISOString().slice(0, 10);
     const row = gymCheckins[ds];
-    const ok = tmpl.allowRest ? isDateCompleted(ds) : !!(row && row.check_in_photo_path && row.check_out_photo_path);
+    const ok = tmpl.allowRest
+      ? isDateCompleted(ds)
+      : !!(row && ((row.check_in_photo_path && row.check_out_photo_path) || (row.is_rest_day && row.purchased_rest)));
     if (!ok) { failed = true; break; }
   }
 
@@ -745,7 +800,12 @@ async function evaluateActiveChallenge() {
   }
   if (dayIndex >= tmpl.days) {
     await sb.from('user_challenges').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', activeChallenge.id);
+    const reward = challengeReward(tmpl);
+    const newPoints = (profile.challengePoints || 0) + reward;
+    const { error: ptErr } = await sb.from('profile').update({ challenge_points: newPoints }).eq('user_id', currentUserId);
+    if (!ptErr) profile.challengePoints = newPoints;
     await loadChallenges();
+    celebrateChallengeComplete(tmpl, reward);
   }
 }
 
@@ -1076,7 +1136,7 @@ function startRestTimer(exerciseName) {
 }
 
 /* ============ PROFILE (for calorie calc) ============ */
-let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, height: 176, freezesEarned: 0, lastFreezeMilestone: 0 };
+let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, height: 176, freezesEarned: 0, lastFreezeMilestone: 0, challengePoints: 0 };
 
 async function loadProfile() {
   if (!currentUserId) return;
@@ -1094,7 +1154,8 @@ async function loadProfile() {
       height: data.height ?? 176,
       activity: String(data.activity ?? 1.375),
       freezesEarned: data.freezes_earned ?? 0,
-      lastFreezeMilestone: data.last_freeze_milestone ?? 0
+      lastFreezeMilestone: data.last_freeze_milestone ?? 0,
+      challengePoints: data.challenge_points ?? 0
     };
   }
 }
@@ -1497,6 +1558,15 @@ async function renderChallengesView() {
   focus.textContent = activeChallenge ? 'Stay consistent — one missed day resets it.' : 'Pick a challenge to lock in.';
   root.appendChild(focus);
 
+  const walletCard = document.createElement('div');
+  walletCard.className = 'card';
+  walletCard.innerHTML = `
+    <div class="card-title">💰 Challenge Points</div>
+    <div class="stat-current" style="font-family:var(--font-mono); font-size:1.4rem; font-weight:700; color:var(--gold);">${profile.challengePoints || 0} CP</div>
+    <div style="font-size:0.72rem; color:var(--muted); margin-top:2px;">Earned by completing challenges · spend to buy a rest day when a challenge won't allow one for free.</div>
+  `;
+  root.appendChild(walletCard);
+
   if (activeChallenge) {
     const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
     const start = new Date(activeChallenge.start_date);
@@ -1518,11 +1588,14 @@ async function renderChallengesView() {
     document.getElementById('abandon-challenge-btn').onclick = abandonChallenge;
   } else {
     CHALLENGE_TEMPLATES.forEach(tmpl => {
+      const reward = challengeReward(tmpl);
+      const cost = restDayPurchaseCost(tmpl);
       const card = document.createElement('div');
       card.className = 'card';
       card.innerHTML = `
         <div class="card-title">${tmpl.name}</div>
-        <div style="font-size:0.8rem; color:var(--muted); margin-bottom:10px;">${tmpl.desc}</div>
+        <div style="font-size:0.8rem; color:var(--muted); margin-bottom:6px;">${tmpl.desc}</div>
+        <div style="font-size:0.72rem; color:var(--gold); margin-bottom:10px;">🏁 Reward: ${reward} CP on completion · 💰 Rest day costs ${cost} CP</div>
         <button class="btn start-challenge-btn" data-id="${tmpl.id}">Start Challenge</button>
       `;
       root.appendChild(card);
