@@ -854,11 +854,109 @@ function renderView() {
   else if (currentView === 'backup') renderBackupView();
 }
 
+/* ============ WEEKLY DASHBOARD ============ */
+const GOAL_MID_WEIGHT = 66.5; // midpoint of 65-68kg target range
+const PLAN_START_WEIGHT = 75;
+
+function computeWeeklyWeightChange() {
+  if (weightLog.length < 1) return null;
+  const latest = weightLog[weightLog.length - 1];
+  const sevenDaysAgo = new Date(latest.date);
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  // closest entry on/before 7 days ago
+  const older = [...weightLog].reverse().find(e => new Date(e.date) <= sevenDaysAgo);
+  if (!older) return null;
+  return latest.weight - older.weight;
+}
+
+function renderDashboardCard() {
+  const latest = weightLog.length ? weightLog[weightLog.length - 1].weight : profile.currentWeight;
+  const weeklyChange = computeWeeklyWeightChange();
+  const { last7 } = computeVsAverage();
+  const goalProgressPct = Math.max(0, Math.min(100, Math.round(
+    ((PLAN_START_WEIGHT - latest) / (PLAN_START_WEIGHT - GOAL_MID_WEIGHT)) * 100
+  )));
+
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const changeStr = weeklyChange == null ? '—' : `${weeklyChange > 0 ? '+' : ''}${weeklyChange.toFixed(1)}kg`;
+  const changeColor = weeklyChange == null ? 'var(--muted)' : (weeklyChange <= 0 ? 'var(--volt)' : 'var(--ember-lite)');
+
+  // 7-day check-in strip
+  const today = new Date();
+  let stripHtml = '';
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    const ds = d.toISOString().slice(0, 10);
+    const row = gymCheckins[ds];
+    let icon = '⬜';
+    if (isDayCompleted(row)) icon = row.is_rest_day ? '😴' : '💪';
+    else if (freezeUses[ds]) icon = '🧊';
+    else if (i > 0) icon = '❌';
+    stripHtml += `<div style="flex:1; text-align:center;"><div style="font-size:1.1rem;">${icon}</div><div style="font-size:0.6rem; color:var(--muted); margin-top:2px;">${d.toLocaleDateString(undefined, { weekday: 'short' }).slice(0,2)}</div></div>`;
+  }
+
+  // Milestone strip
+  const bestEver = weightLog.length ? Math.min(...weightLog.map(w => w.weight)) : latest;
+  const milestoneHtml = WEIGHT_MILESTONES.map(m => {
+    const hit = bestEver <= m;
+    return `<span style="color:${hit ? 'var(--gold)' : 'var(--muted)'}; font-weight:${hit ? '700' : '400'};">${hit ? '✅' : '⬜'} ${m}kg</span>`;
+  }).join(' &nbsp; ') + ` &nbsp; <span style="color:${bestEver <= 68 ? 'var(--gold)' : 'var(--muted)'}; font-weight:${bestEver <= 68 ? '700' : '400'};">${bestEver <= 68 ? '✅' : '⬜'} Maintenance</span>`;
+
+  // Habit checklist
+  const habitToday = habitLog[todayStr()] || { steps_hit: false, slept_well: false, water_hit: false };
+  const workoutDone = isDayCompleted(gymCheckins[todayStr()]);
+
+  card.innerHTML = `
+    <div class="card-title">📊 This Week</div>
+    <div class="stat-grid">
+      <div class="stat-box"><div class="val">${latest ? latest.toFixed(1) : '-'}</div><div class="lbl">Current (kg)</div></div>
+      <div class="stat-box"><div class="val">65-68</div><div class="lbl">Goal (kg)</div></div>
+      <div class="stat-box"><div class="val" style="color:${changeColor};">${changeStr}</div><div class="lbl">Weekly change</div></div>
+      <div class="stat-box"><div class="val">${last7}/7</div><div class="lbl">Days this week</div></div>
+      <div class="stat-box"><div class="val">${streaks.current}</div><div class="lbl">Workout streak</div></div>
+      <div class="stat-box"><div class="val">${goalProgressPct}%</div><div class="lbl">Goal progress</div></div>
+    </div>
+    <div class="progress-bar-bg" style="margin-top:10px;"><div class="progress-bar-fill" style="width:${goalProgressPct}%"></div></div>
+    <div style="display:flex; gap:4px; margin-top:12px;">${stripHtml}</div>
+    <div style="margin-top:10px; font-size:0.76rem; line-height:1.8;">${milestoneHtml}</div>
+    <div style="margin-top:12px; border-top:1px solid var(--border); padding-top:10px;">
+      <div style="font-size:0.78rem; font-weight:700; margin-bottom:6px;">Today's Habits</div>
+      <label style="display:flex; align-items:center; gap:6px; font-size:0.8rem; margin-bottom:4px; opacity:${workoutDone ? '1' : '0.6'};">
+        <input type="checkbox" ${workoutDone ? 'checked' : ''} disabled style="accent-color:var(--volt);"> Workout done
+      </label>
+      <label class="habit-toggle-lbl" data-field="steps_hit" style="display:flex; align-items:center; gap:6px; font-size:0.8rem; margin-bottom:4px; cursor:pointer;">
+        <input type="checkbox" ${habitToday.steps_hit ? 'checked' : ''} style="accent-color:var(--volt);"> 8k steps
+      </label>
+      <label class="habit-toggle-lbl" data-field="slept_well" style="display:flex; align-items:center; gap:6px; font-size:0.8rem; margin-bottom:4px; cursor:pointer;">
+        <input type="checkbox" ${habitToday.slept_well ? 'checked' : ''} style="accent-color:var(--volt);"> Slept 7+ hours
+      </label>
+      <label class="habit-toggle-lbl" data-field="water_hit" style="display:flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+        <input type="checkbox" ${habitToday.water_hit ? 'checked' : ''} style="accent-color:var(--volt);"> Drank water target
+      </label>
+    </div>
+  `;
+
+  card.querySelectorAll('.habit-toggle-lbl').forEach(lbl => {
+    lbl.onclick = (e) => {
+      e.preventDefault();
+      toggleHabit(lbl.getAttribute('data-field'));
+    };
+  });
+
+  return card;
+}
+
 /* ============ WORKOUT VIEW ============ */
 async function renderWorkoutView() {
   await loadExerciseLog();
+  await loadHabitLog();
   const root = document.getElementById('view-root');
   root.innerHTML = '';
+
+  root.appendChild(renderDashboardCard());
 
   const progressWrap = document.createElement('div');
   progressWrap.className = 'progress-wrap';
@@ -1136,7 +1234,7 @@ function startRestTimer(exerciseName) {
 }
 
 /* ============ PROFILE (for calorie calc) ============ */
-let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, height: 176, freezesEarned: 0, lastFreezeMilestone: 0, challengePoints: 0 };
+let profile = { age: '', sex: 'male', activity: '1.375', currentWeight: 75, height: 176, freezesEarned: 0, lastFreezeMilestone: 0, challengePoints: 0, lastWeightMilestone: null };
 
 async function loadProfile() {
   if (!currentUserId) return;
@@ -1155,7 +1253,8 @@ async function loadProfile() {
       activity: String(data.activity ?? 1.375),
       freezesEarned: data.freezes_earned ?? 0,
       lastFreezeMilestone: data.last_freeze_milestone ?? 0,
-      challengePoints: data.challenge_points ?? 0
+      challengePoints: data.challenge_points ?? 0,
+      lastWeightMilestone: data.last_weight_milestone ?? null
     };
   }
 }
@@ -1204,8 +1303,96 @@ async function deleteWeightEntry(dateStr) {
   if (error) console.error('deleteWeightEntry failed', error);
 }
 
+/* ============ MEASUREMENT LOG ============ */
+let measurementLog = []; // {date, waist, chest, hips, arms}
+
+async function loadMeasurementLog() {
+  if (!currentUserId) { measurementLog = []; return; }
+  const { data, error } = await sb
+    .from('measurement_log')
+    .select('entry_date, waist, chest, hips, arms')
+    .eq('user_id', currentUserId)
+    .order('entry_date', { ascending: true });
+  if (error) { console.error('loadMeasurementLog failed', error); measurementLog = []; return; }
+  measurementLog = (data || []).map(r => ({ date: r.entry_date, waist: r.waist, chest: r.chest, hips: r.hips, arms: r.arms }));
+}
+
+async function saveMeasurementEntry(dateStr, vals) {
+  const { error } = await sb
+    .from('measurement_log')
+    .upsert({ user_id: currentUserId, entry_date: dateStr, ...vals }, { onConflict: 'user_id,entry_date' });
+  if (error) console.error('saveMeasurementEntry failed', error);
+}
+
+async function deleteMeasurementEntry(dateStr) {
+  const { error } = await sb
+    .from('measurement_log')
+    .delete()
+    .eq('user_id', currentUserId)
+    .eq('entry_date', dateStr);
+  if (error) console.error('deleteMeasurementEntry failed', error);
+}
+
+/* ============ HABIT LOG ============ */
+let habitLog = {}; // entry_date -> {steps_hit, slept_well, water_hit}
+
+async function loadHabitLog() {
+  if (!currentUserId) { habitLog = {}; return; }
+  const { data, error } = await sb
+    .from('habit_log')
+    .select('entry_date, steps_hit, slept_well, water_hit')
+    .eq('user_id', currentUserId);
+  if (error) { console.error('loadHabitLog failed', error); habitLog = {}; return; }
+  habitLog = {};
+  (data || []).forEach(r => { habitLog[r.entry_date] = r; });
+}
+
+async function toggleHabit(field) {
+  if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+  const date = todayStr();
+  const current = habitLog[date] || { steps_hit: false, slept_well: false, water_hit: false };
+  const updated = { ...current, [field]: !current[field] };
+  const { error } = await sb.from('habit_log').upsert({
+    user_id: currentUserId, entry_date: date, ...updated
+  }, { onConflict: 'user_id,entry_date' });
+  if (error) { console.error('toggleHabit failed', error); return; }
+  habitLog[date] = updated;
+  computeXP();
+  renderXPWidget();
+  renderWorkoutView();
+}
+
+/* ============ WEIGHT MILESTONES ============ */
+const WEIGHT_MILESTONES = [73, 70, 68];
+
+function checkWeightMilestones() {
+  if (!weightLog.length) return;
+  const bestEver = Math.min(...weightLog.map(w => w.weight));
+  const last = profile.lastWeightMilestone;
+  const crossed = WEIGHT_MILESTONES.filter(m => bestEver <= m && (last == null || m < last));
+  if (!crossed.length) return;
+  const newest = Math.min(...crossed);
+  profile.lastWeightMilestone = newest;
+  sb.from('profile').update({ last_weight_milestone: newest }).eq('user_id', currentUserId)
+    .then(({ error }) => { if (error) console.error('milestone save failed', error); });
+  celebrateMilestone(newest);
+}
+
+function celebrateMilestone(weight) {
+  const toast = document.createElement('div');
+  toast.className = 'streak-toast pr-toast';
+  toast.textContent = weight <= 68 ? `🏆 ${weight}kg — maintenance phase unlocked!` : `🏆 Milestone hit: ${weight}kg!`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.classList.add('show'), 10);
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 400);
+  }, 3200);
+}
+
 async function renderWeightView() {
   await loadWeightLog();
+  await loadMeasurementLog();
   await loadProfile();
   const root = document.getElementById('view-root');
   root.innerHTML = '';
@@ -1291,6 +1478,8 @@ async function renderWeightView() {
   }
   root.appendChild(logCard);
 
+  root.appendChild(renderMeasurementCard());
+
   document.getElementById('log-weight-btn').onclick = async () => {
     const val = parseFloat(document.getElementById('weight-input').value);
     if (!val || val <= 0) return;
@@ -1303,6 +1492,7 @@ async function renderWeightView() {
       await saveProfile();
     }
     await loadWeightLog();
+    checkWeightMilestones();
     computeXP();
     renderXPWidget();
     renderWeightView();
@@ -1344,6 +1534,82 @@ function buildWeightChart(log) {
   });
 
   return svg;
+}
+
+function renderMeasurementCard() {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  const first = measurementLog[0];
+  const latest = measurementLog[measurementLog.length - 1];
+  const fields = [
+    { key: 'waist', label: 'Waist' },
+    { key: 'chest', label: 'Chest' },
+    { key: 'hips', label: 'Hips' },
+    { key: 'arms', label: 'Arms' }
+  ];
+
+  let compareHtml = '';
+  if (first && latest && first.date !== latest.date) {
+    compareHtml = `
+      <div style="font-size:0.72rem; color:var(--muted); margin-bottom:8px;">Before (${first.date}) → Now (${latest.date})</div>
+      <div class="stat-grid">
+        ${fields.map(f => {
+          const b = first[f.key], n = latest[f.key];
+          if (b == null || n == null) return `<div class="stat-box"><div class="val">-</div><div class="lbl">${f.label}</div></div>`;
+          const delta = (n - b).toFixed(1);
+          return `<div class="stat-box"><div class="val">${n}<span style="font-size:0.65rem; color:${delta <= 0 ? 'var(--volt)' : 'var(--ember-lite)'};"> (${delta > 0 ? '+' : ''}${delta})</span></div><div class="lbl">${f.label} (cm)</div></div>`;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  const historyHtml = [...measurementLog].reverse().slice(0, 10).map(m => `
+    <div class="log-entry" data-date="${m.date}">
+      <span>W:${m.waist ?? '-'} C:${m.chest ?? '-'} H:${m.hips ?? '-'} A:${m.arms ?? '-'}</span>
+      <span style="display:flex; align-items:center; gap:8px;"><span class="date">${m.date}</span><span class="del">✕</span></span>
+    </div>
+  `).join('');
+
+  card.innerHTML = `
+    <div class="card-title">📏 Body Measurements (cm)</div>
+    ${compareHtml}
+    <div class="field-row" style="margin-top:${compareHtml ? '10px' : '0'};">
+      <div class="field"><label>Waist</label><input type="number" step="0.5" id="m-waist"></div>
+      <div class="field"><label>Chest</label><input type="number" step="0.5" id="m-chest"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Hips</label><input type="number" step="0.5" id="m-hips"></div>
+      <div class="field"><label>Arms</label><input type="number" step="0.5" id="m-arms"></div>
+    </div>
+    <button class="btn" id="save-measurement-btn">Log measurements</button>
+    ${historyHtml ? `<div style="margin-top:10px;">${historyHtml}</div>` : '<div class="empty-note">No measurements logged yet.</div>'}
+  `;
+
+  card.querySelector('#save-measurement-btn').onclick = async () => {
+    if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+    const vals = {
+      waist: parseFloat(card.querySelector('#m-waist').value) || null,
+      chest: parseFloat(card.querySelector('#m-chest').value) || null,
+      hips: parseFloat(card.querySelector('#m-hips').value) || null,
+      arms: parseFloat(card.querySelector('#m-arms').value) || null
+    };
+    if (!vals.waist && !vals.chest && !vals.hips && !vals.arms) return;
+    await saveMeasurementEntry(todayStr(), vals);
+    await loadMeasurementLog();
+    renderWeightView();
+  };
+
+  card.querySelectorAll('.log-entry .del').forEach(delBtn => {
+    delBtn.onclick = async () => {
+      const ds = delBtn.closest('.log-entry').getAttribute('data-date');
+      await deleteMeasurementEntry(ds);
+      await loadMeasurementLog();
+      renderWeightView();
+    };
+  });
+
+  return card;
 }
 
 /* ============ CALORIE TRACKER VIEW ============ */
@@ -1719,6 +1985,7 @@ async function startApp() {
       await loadFreezeUses();
       await loadExerciseLog();
       await loadWeightLog();
+      checkWeightMilestones();
       await applyStreakFreezes();
       computeStreaks();
       await checkFreezeAward();
