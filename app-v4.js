@@ -126,7 +126,7 @@ const plan = [
   }
 ];
 
-let currentView = 'workout'; // 'workout' | 'weight' | 'backup'
+let currentView = 'workout'; // 'workout' | 'weight' | 'challenges' | 'backup'
 let currentDay = 0;
 const dayState = {}; // dayIndex -> Set of checked exercise indices
 let exerciseLog = []; // {exercise_name, entry_date, weight, reps}
@@ -452,6 +452,26 @@ async function handleRestDay() {
   if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
   const date = todayStr();
   if (gymCheckins[date]) return;
+
+  if (activeChallenge) {
+    const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
+    if (tmpl && !tmpl.allowRest) {
+      alert(`"${tmpl.name}" doesn't allow rest days — check in today to keep the challenge alive!`);
+      return;
+    }
+    if (tmpl && tmpl.minRestGap) {
+      const restDates = Object.keys(gymCheckins).filter(d => gymCheckins[d].is_rest_day).sort();
+      const lastRest = restDates.length ? restDates[restDates.length - 1] : null;
+      if (lastRest) {
+        const gapDays = Math.round((new Date(date) - new Date(lastRest)) / 86400000);
+        if (gapDays < tmpl.minRestGap) {
+          alert(`During "${tmpl.name}", rest days must be at least ${tmpl.minRestGap} days apart. Your last rest day was ${lastRest}.`);
+          return;
+        }
+      }
+    }
+  }
+
   if (!confirm("Mark today as a rest day? This keeps your streak alive without a gym check-in.")) return;
   const { error } = await sb.from('gym_checkins').upsert({
     user_id: currentUserId,
@@ -462,6 +482,7 @@ async function handleRestDay() {
   await loadGymCheckins();
   computeStreaks();
   await checkFreezeAward();
+  await evaluateActiveChallenge();
   renderStreakWidget();
   computeXP();
   renderXPWidget();
@@ -495,6 +516,19 @@ function renderStreakWidget() {
   const litClass = streaks.current > 0 ? 'lit' : '';
   const freezeBalance = Math.max(0, Math.min(3, (profile.freezesEarned || 0) - Object.keys(freezeUses).length));
 
+  let challengeBadge = '';
+  if (activeChallenge) {
+    const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
+    if (tmpl) {
+      const start = new Date(activeChallenge.start_date);
+      start.setHours(0, 0, 0, 0);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const dIdx = Math.min(tmpl.days, Math.floor((today - start) / 86400000) + 1);
+      challengeBadge = ` · 🎯 ${tmpl.name} D${dIdx}/${tmpl.days}`;
+    }
+  }
+
   el.innerHTML = `
     <div class="streak-widget ${litClass} ${tierClass}">
       <div class="streak-flame-wrap">
@@ -502,7 +536,7 @@ function renderStreakWidget() {
       </div>
       <div class="streak-nums">
         <div class="streak-current">${streaks.current}</div>
-        <div class="streak-lbl">day streak · best ${streaks.best}${freezeBalance > 0 ? ` · 🧊×${freezeBalance}` : ''}</div>
+        <div class="streak-lbl">day streak · best ${streaks.best}${freezeBalance > 0 ? ` · 🧊×${freezeBalance}` : ''}${challengeBadge}</div>
       </div>
       <div class="streak-actions">${actionsHtml}</div>
     </div>
@@ -648,6 +682,92 @@ function renderVsAverageWidget() {
   `;
 }
 
+/* ============ CHALLENGES ============ */
+const CHALLENGE_TEMPLATES = [
+  { id: '7-day-gym', name: '7 Days of Gym', days: 7, allowRest: false, minRestGap: null,
+    desc: 'Check in and out 7 days straight. No rest days allowed.' },
+  { id: '14-day-momentum', name: '14-Day Momentum', days: 14, allowRest: true, minRestGap: 3,
+    desc: '14 days of consistency. Rest days allowed, but must be at least 3 days apart.' },
+  { id: '21-day-habit', name: '21-Day Habit Builder', days: 21, allowRest: true, minRestGap: 3,
+    desc: '21 days to lock in the habit. Rest days allowed, spaced 3+ days apart.' },
+  { id: '30-day-commit', name: '30-Day Commitment', days: 30, allowRest: true, minRestGap: 3,
+    desc: 'A full month of consistency. Rest days allowed, spaced 3+ days apart.' }
+];
+
+function getChallengeTemplate(id) {
+  return CHALLENGE_TEMPLATES.find(t => t.id === id);
+}
+
+let userChallenges = [];
+let activeChallenge = null;
+
+async function loadChallenges() {
+  if (!currentUserId) { userChallenges = []; activeChallenge = null; return; }
+  const { data, error } = await sb
+    .from('user_challenges')
+    .select('*')
+    .eq('user_id', currentUserId)
+    .order('start_date', { ascending: false });
+  if (error) { console.error('loadChallenges failed', error); userChallenges = []; activeChallenge = null; return; }
+  userChallenges = data || [];
+  activeChallenge = userChallenges.find(c => c.status === 'active') || null;
+}
+
+// Checks the active challenge against real check-in history and flips it to
+// failed/completed if warranted. Rest-day rule violations are blocked at the
+// point of marking a rest day (see handleRestDay), so this mainly catches
+// entirely-missed days.
+async function evaluateActiveChallenge() {
+  if (!activeChallenge) return;
+  const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
+  if (!tmpl) return;
+
+  const start = new Date(activeChallenge.start_date);
+  start.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const dayIndex = Math.floor((today - start) / 86400000);
+
+  let failed = false;
+  for (let i = 0; i < Math.min(dayIndex, tmpl.days); i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    const ds = d.toISOString().slice(0, 10);
+    const row = gymCheckins[ds];
+    const ok = tmpl.allowRest ? isDateCompleted(ds) : !!(row && row.check_in_photo_path && row.check_out_photo_path);
+    if (!ok) { failed = true; break; }
+  }
+
+  if (failed) {
+    await sb.from('user_challenges').update({ status: 'failed', updated_at: new Date().toISOString() }).eq('id', activeChallenge.id);
+    await loadChallenges();
+    return;
+  }
+  if (dayIndex >= tmpl.days) {
+    await sb.from('user_challenges').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', activeChallenge.id);
+    await loadChallenges();
+  }
+}
+
+async function startChallenge(templateId) {
+  if (!currentUserId) { alert("Not connected yet — tap Retry at the top, then try again."); return; }
+  if (activeChallenge) { alert("Finish or abandon your current challenge first."); return; }
+  const { error } = await sb.from('user_challenges').insert({
+    user_id: currentUserId, challenge_id: templateId, start_date: todayStr(), status: 'active'
+  });
+  if (error) { console.error('startChallenge failed', error); alert('Could not start challenge.'); return; }
+  await loadChallenges();
+  renderView();
+}
+
+async function abandonChallenge() {
+  if (!activeChallenge) return;
+  if (!confirm('Abandon this challenge? Your progress will be lost.')) return;
+  await sb.from('user_challenges').update({ status: 'abandoned', updated_at: new Date().toISOString() }).eq('id', activeChallenge.id);
+  await loadChallenges();
+  renderView();
+}
+
 /* ============ MAIN NAV ============ */
 function renderMainNav() {
   const nav = document.getElementById('main-nav');
@@ -655,6 +775,7 @@ function renderMainNav() {
   const views = [
     { id: 'workout', label: 'Workout' },
     { id: 'weight', label: 'Weight Log' },
+    { id: 'challenges', label: 'Challenges' },
     { id: 'backup', label: 'Backup' }
   ];
   views.forEach(v => {
@@ -669,6 +790,7 @@ function renderMainNav() {
 function renderView() {
   if (currentView === 'workout') renderWorkoutView();
   else if (currentView === 'weight') renderWeightView();
+  else if (currentView === 'challenges') renderChallengesView();
   else if (currentView === 'backup') renderBackupView();
 }
 
@@ -1357,6 +1479,73 @@ async function renderCaloriesView() {
 }
 
 /* ============ BACKUP VIEW ============ */
+/* ============ CHALLENGES VIEW ============ */
+async function renderChallengesView() {
+  await loadChallenges();
+  await evaluateActiveChallenge();
+
+  const root = document.getElementById('view-root');
+  root.innerHTML = '';
+
+  const title = document.createElement('div');
+  title.className = 'day-title';
+  title.textContent = 'Challenges';
+  root.appendChild(title);
+
+  const focus = document.createElement('div');
+  focus.className = 'day-focus';
+  focus.textContent = activeChallenge ? 'Stay consistent — one missed day resets it.' : 'Pick a challenge to lock in.';
+  root.appendChild(focus);
+
+  if (activeChallenge) {
+    const tmpl = getChallengeTemplate(activeChallenge.challenge_id);
+    const start = new Date(activeChallenge.start_date);
+    start.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const dayIndex = Math.min(tmpl.days, Math.floor((today - start) / 86400000) + 1);
+    const pct = Math.round((dayIndex / tmpl.days) * 100);
+
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="card-title">🔥 ${tmpl.name} — Day ${dayIndex}/${tmpl.days}</div>
+      <div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${pct}%"></div></div>
+      <div style="margin-top:8px; font-size:0.78rem; color:var(--muted);">${tmpl.desc}</div>
+      <button class="reset-btn" id="abandon-challenge-btn" style="margin-top:10px; color:#ff9a8a; border-color:rgba(255,106,61,0.3);">Abandon challenge</button>
+    `;
+    root.appendChild(card);
+    document.getElementById('abandon-challenge-btn').onclick = abandonChallenge;
+  } else {
+    CHALLENGE_TEMPLATES.forEach(tmpl => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.innerHTML = `
+        <div class="card-title">${tmpl.name}</div>
+        <div style="font-size:0.8rem; color:var(--muted); margin-bottom:10px;">${tmpl.desc}</div>
+        <button class="btn start-challenge-btn" data-id="${tmpl.id}">Start Challenge</button>
+      `;
+      root.appendChild(card);
+    });
+    root.querySelectorAll('.start-challenge-btn').forEach(btn => {
+      btn.onclick = () => startChallenge(btn.getAttribute('data-id'));
+    });
+  }
+
+  const past = userChallenges.filter(c => c.status !== 'active');
+  if (past.length) {
+    const histCard = document.createElement('div');
+    histCard.className = 'card';
+    const rows = past.slice(0, 10).map(c => {
+      const t = getChallengeTemplate(c.challenge_id);
+      const icon = c.status === 'completed' ? '✅' : c.status === 'failed' ? '❌' : '⚪';
+      return `<div class="log-entry"><span>${icon} ${t ? t.name : c.challenge_id}</span><span class="date">${c.start_date}</span></div>`;
+    }).join('');
+    histCard.innerHTML = `<div class="card-title">History</div>${rows}`;
+    root.appendChild(histCard);
+  }
+}
+
 async function renderBackupView() {
   const root = document.getElementById('view-root');
   root.innerHTML = '';
@@ -1460,6 +1649,8 @@ async function startApp() {
       await applyStreakFreezes();
       computeStreaks();
       await checkFreezeAward();
+      await loadChallenges();
+      await evaluateActiveChallenge();
       computePRFeed();
       computeXP();
     }

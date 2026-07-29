@@ -119,3 +119,24 @@ alter table streak_freeze_uses enable row level security;
 
 create policy "own streak freezes" on streak_freeze_uses
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+-- Challenges (7-day gym streak, etc). Templates are hardcoded in app-v4.js —
+-- this table only tracks which challenge a user has joined and its status.
+create table if not exists user_challenges (
+  id bigint generated always as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  challenge_id text not null,
+  start_date date not null,
+  status text not null default 'active', -- active | completed | failed | abandoned
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+alter table user_challenges enable row level security;
+
+create policy "own challenges" on user_challenges
+  for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+create unique index if not exists one_active_challenge_per_user
+  on user_challenges (user_id)
+  where status = 'active';
